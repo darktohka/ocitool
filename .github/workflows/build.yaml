@@ -69,4 +69,4 @@ jobs:
         uses: actions/download-artifact@v4
       - name: Push the image
         run: |
-          docker run -v $(pwd):/srv darktohka/ocitool --plan oci.json --username "${{ secrets.DOCKER_USERNAME }}" --password "${{ secrets.DOCKER_PASSWORD }}"
+          docker run -v $(pwd):/srv darktohka/ocitool --username "${{ secrets.DOCKER_USERNAME }}" --password "${{ secrets.DOCKER_PASSWORD }}"

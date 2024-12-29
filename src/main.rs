@@ -2,6 +2,8 @@ use clap::{command, Parser};
 use spec::plan::ImagePlan;
 use std::env;
 use std::fs::File;
+use std::path::Path;
+use walkdir::WalkDir;
 mod digest;
 mod execution;
 mod spec;
@@ -49,6 +51,30 @@ async fn main() {
         .password
         .map(|s| s.to_string())
         .or_else(|| env::var("DOCKER_PASSWORD").ok());
+
+    let plan_path = Path::new(&args.plan);
+    let plan = if plan_path.exists() {
+        args.plan.clone()
+    } else {
+        let plan_basename = plan_path.file_name().expect("Invalid plan filename");
+        WalkDir::new(env::current_dir().unwrap())
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .find(|entry| entry.file_name() == plan_basename)
+            .expect("Plan file not found")
+            .into_path()
+            .to_str()
+            .unwrap()
+            .to_string()
+    };
+
+    println!("Executing plan: {}", plan);
+
+    if let Some(parent) = Path::new(&plan).parent() {
+        if parent.exists() {
+            env::set_current_dir(parent).expect("Failed to set current directory");
+        }
+    }
 
     let file = File::open(args.plan).expect("Failed to open plan file");
     let plan: ImagePlan = serde_json::from_reader(file).unwrap();
