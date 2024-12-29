@@ -67,6 +67,9 @@ jobs:
         uses: actions/checkout@v4
       - name: Download artifacts
         uses: actions/download-artifact@v4
+      - name: Set executable permissions
+        run: |
+          chmod +x */ocitool
       - name: Push the image
         run: |
           docker run -v $(pwd):/srv darktohka/ocitool --username "${{ secrets.DOCKER_USERNAME }}" --password "${{ secrets.DOCKER_PASSWORD }}"
