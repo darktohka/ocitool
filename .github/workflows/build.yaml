@@ -63,6 +63,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-x86_64, build-arm64, build-armv7]
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
       - name: Download artifacts
         uses: actions/download-artifact@v4
       - name: Push the image
