@@ -26,6 +26,16 @@ impl ImagePlan {
             "https://registry-1.docker.io".to_string()
         }
     }
+
+    pub fn get_service_url(&self) -> String {
+        let parts: Vec<&str> = self.name.split('/').collect();
+
+        if parts.len() > 2 {
+            parts[0].to_string()
+        } else {
+            "registry.docker.io".to_string()
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]

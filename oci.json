@@ -1,0 +1,41 @@
+{
+  "name": "darktohka/ocitool",
+  "tags": ["latest"],
+  "config": {
+    "entrypoint": ["/ocitool"],
+    "workingDir": "/"
+  },
+  "platforms": [
+    {
+      "architecture": "amd64",
+      "layers": [
+        {
+          "type": "dir",
+          "source": "./binary-x86_64",
+          "comment": "https://github.com/darktohka/ocitool"
+        }
+      ]
+    },
+    {
+      "architecture": "arm64",
+      "layers": [
+        {
+          "type": "dir",
+          "source": "./binary-aarch64",
+          "comment": "https://github.com/darktohka/ocitool"
+        }
+      ]
+    },
+    {
+      "architecture": "arm",
+      "variant": "v7",
+      "layers": [
+        {
+          "type": "dir",
+          "source": "./binary-armv7",
+          "comment": "https://github.com/darktohka/ocitool"
+        }
+      ]
+    }
+  ]
+}

@@ -4,6 +4,7 @@ use crate::execution::Blob;
 
 pub struct OciUploader {
     registry: String,
+    service: String,
     image_name: String,
     username: Option<String>,
     password: Option<String>,
@@ -35,6 +36,7 @@ impl OciUploader {
 
     pub fn new(
         registry: &str,
+        service: &str,
         image_name: &str,
         username: Option<String>,
         password: Option<String>,
@@ -46,6 +48,7 @@ impl OciUploader {
 
         OciUploader {
             registry: registry.to_string(),
+            service: service.to_string(),
             image_name: OciUploader::get_image_url(image_name),
             username,
             password,
@@ -161,7 +164,7 @@ impl OciUploader {
             let url = format!(
                 "{}?service={}&scope={}",
                 self.get_auth_url(),
-                "Docker registry",
+                self.service,
                 scope
             );
 

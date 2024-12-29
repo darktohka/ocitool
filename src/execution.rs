@@ -58,8 +58,19 @@ impl Layer {
 }
 
 impl PlanExecution {
-    pub fn new(plan: ImagePlan, username: Option<String>, password: Option<String>) -> Self {
-        let uploader = OciUploader::new(&plan.get_registry_url(), &plan.name, username, password);
+    pub fn new(
+        plan: ImagePlan,
+        service: Option<String>,
+        username: Option<String>,
+        password: Option<String>,
+    ) -> Self {
+        let uploader = OciUploader::new(
+            &plan.get_registry_url(),
+            &service.unwrap_or_else(|| plan.get_service_url()),
+            &plan.name,
+            username,
+            password,
+        );
 
         PlanExecution { plan, uploader }
     }

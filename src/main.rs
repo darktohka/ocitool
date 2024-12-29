@@ -13,8 +13,14 @@ mod walk;
 #[command(version, about, long_about = None)]
 struct Args {
     /// Sets a custom plan filename to use
-    #[arg(long, default_value = "plan.json")]
+    #[arg(long, default_value = "oci.json")]
     plan: String,
+
+    /// Sets a service to authenticate to the registry with
+    /// If not set, the DOCKER_SERVICE environment variable will be used
+    /// If that is not set, the registry URL will be used
+    #[arg(short, long)]
+    service: Option<String>,
 
     /// Sets the username to authenticate to the registry with
     /// If not set, the DOCKER_USERNAME environment variable will be used
@@ -31,6 +37,10 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
+    let service = args
+        .service
+        .map(|s| s.to_string())
+        .or_else(|| env::var("DOCKER_SERVICE").ok());
     let username = args
         .username
         .map(|s| s.to_string())
@@ -43,7 +53,7 @@ async fn main() {
     let file = File::open(args.plan).expect("Failed to open plan file");
     let plan: ImagePlan = serde_json::from_reader(file).unwrap();
 
-    let mut execution = execution::PlanExecution::new(plan, username, password);
+    let mut execution = execution::PlanExecution::new(plan, service, username, password);
 
     execution.execute().await;
 }
