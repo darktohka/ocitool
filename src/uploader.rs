@@ -42,7 +42,6 @@ impl OciUploader {
         password: Option<String>,
     ) -> Self {
         let client = Client::builder()
-            .http2_prior_knowledge() // Enable HTTP/2 multiplexing
             .build()
             .expect("Failed to build HTTP client");
 

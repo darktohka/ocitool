@@ -12,7 +12,7 @@ regex-lite = "0.1.6"
 tar = "0.4.43"
 zstd = { version = "0.13", default-features = false, features = [] }
 tokio = { version = "1", features = ["sync", "net", "rt", "rt-multi-thread", "macros"], default-features = false }
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "hickory-dns", "http2"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "hickory-dns", "stream"], default-features = false }
 sha256 = "1.5.0"
 clap = { version = "4.5.23", features = ["derive"] }
 
