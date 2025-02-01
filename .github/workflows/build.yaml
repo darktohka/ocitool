@@ -72,4 +72,4 @@ jobs:
           chmod +x */ocitool
       - name: Push the image
         run: |
-          docker run -v $(pwd):/srv darktohka/ocitool
+          docker run -v $(pwd):/srv ghcr.io/darktohka/ocitool
