@@ -15,6 +15,7 @@ tokio = { version = "1", features = ["sync", "net", "rt", "rt-multi-thread", "ma
 reqwest = { version = "0", features = ["json", "rustls-tls", "hickory-dns", "stream"], default-features = false }
 sha256 = "1"
 clap = { version = "4", features = ["derive"] }
+base64 = "0"
 
 [profile.release-lto]
 inherits = "release"

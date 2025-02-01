@@ -1,6 +1,6 @@
-use reqwest::{Client, StatusCode};
-
 use crate::execution::Blob;
+use base64::{prelude::BASE64_STANDARD, Engine};
+use reqwest::{Client, StatusCode};
 
 pub struct OciUploader {
     registry: String,
@@ -92,7 +92,6 @@ impl OciUploader {
             return Ok(());
         }
 
-        println!("Uploading blob {}...", blob.digest);
         let url = format!("{}/v2/{}/blobs/uploads/", self.registry, self.image_name);
         let response = self
             .client
@@ -107,7 +106,18 @@ impl OciUploader {
             .ok_or("Missing Location header")?
             .to_str()?;
 
-        let upload_url = format!("{}&digest={}", location, blob.digest);
+        let location = if location.starts_with('/') {
+            format!("{}{}", self.registry, location)
+        } else {
+            location.to_string()
+        };
+
+        let upload_url = if location.contains('?') {
+            format!("{}&digest={}", location, blob.digest)
+        } else {
+            format!("{}?digest={}", location, blob.digest)
+        };
+
         let request = self
             .client
             .put(upload_url)
@@ -159,46 +169,70 @@ impl OciUploader {
 
     async fn auth_headers(&mut self) -> reqwest::header::HeaderMap {
         if self.auth_header == None {
-            let scope = format!("repository:{}:pull,push", self.image_name);
-            let url = format!(
-                "{}?service={}&scope={}",
-                self.get_auth_url(),
-                self.service,
-                scope
-            );
+            if self.registry.contains("ghcr.io") {
+                // On GitHub, we do not need to login again
 
-            let mut request = self.client.get(&url);
+                if self.password.is_none() || self.password.as_ref().unwrap().is_empty() {
+                    self.password = Some(
+                        std::env::var("GITHUB_TOKEN")
+                            .expect("GITHUB_TOKEN environment variable not set"),
+                    );
+                }
 
-            if let (Some(username), Some(password)) = (&self.username, &self.password) {
-                request = request.basic_auth(username, Some(password));
-                println!("Logging in as {}...", username);
+                self.auth_header = Some(
+                    format!(
+                        "Bearer {}",
+                        BASE64_STANDARD.encode(self.password.as_ref().unwrap())
+                    )
+                    .to_string(),
+                );
             } else {
-                println!("Logging in anonymously...");
-            }
+                let scope = format!("repository:{}:pull,push", self.image_name);
+                let url = format!(
+                    "{}?service={}&scope={}",
+                    self.get_auth_url(),
+                    self.service,
+                    scope
+                );
 
-            if let Some(response) = request.send().await.ok() {
-                if response.status() == StatusCode::OK {
-                    if let Ok(response_text) = response.text().await {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text)
-                        {
-                            if let Some(token) = json.get("access_token").and_then(|v| v.as_str()) {
-                                self.auth_header = Some(format!("Bearer {}", token));
-                            } else if let Some(token) = json.get("token").and_then(|v| v.as_str()) {
-                                self.auth_header = Some(format!("Bearer {}", token));
+                let mut request = self.client.get(&url);
+
+                if let (Some(username), Some(password)) = (&self.username, &self.password) {
+                    request = request.basic_auth(username, Some(password));
+                    println!("Logging in as {}...", username);
+                } else {
+                    println!("Logging in anonymously...");
+                }
+
+                if let Some(response) = request.send().await.ok() {
+                    if response.status() == StatusCode::OK {
+                        if let Ok(response_text) = response.text().await {
+                            if let Ok(json) =
+                                serde_json::from_str::<serde_json::Value>(&response_text)
+                            {
+                                if let Some(token) =
+                                    json.get("access_token").and_then(|v| v.as_str())
+                                {
+                                    self.auth_header = Some(format!("Bearer {}", token));
+                                } else if let Some(token) =
+                                    json.get("token").and_then(|v| v.as_str())
+                                {
+                                    self.auth_header = Some(format!("Bearer {}", token));
+                                } else {
+                                    println!("Could not get token from JSON response");
+                                }
                             } else {
-                                println!("Could not get token from JSON response");
+                                self.auth_header = Some(format!("Bearer {}", response_text));
                             }
                         } else {
-                            self.auth_header = Some(format!("Bearer {}", response_text));
+                            println!("Could not get token from text response");
                         }
                     } else {
-                        println!("Could not get token from text response");
+                        println!("Token login status not OK");
                     }
                 } else {
-                    println!("Token login status not OK");
+                    println!("Could not send login request");
                 }
-            } else {
-                println!("Could not send login request");
             }
         }
 

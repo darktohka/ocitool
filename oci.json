@@ -1,9 +1,12 @@
 {
-  "name": "darktohka/ocitool",
+  "name": "ghcr.io/darktohka/ocitool",
   "tags": ["latest"],
   "config": {
     "entrypoint": ["/ocitool"],
-    "workingDir": "/"
+    "workingDir": "/",
+    "labels": {
+      "org.opencontainers.image.source": "https://github.com/darktohka/ocitool"
+    }
   },
   "platforms": [
     {
