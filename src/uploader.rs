@@ -152,6 +152,7 @@ impl OciUploader {
     pub async fn upload_manifest(
         &mut self,
         manifest_data: Vec<u8>,
+        content_type: &str,
         tag: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let url = format!("{}/v2/{}/manifests/{}", self.registry, self.image_name, tag);
@@ -162,7 +163,7 @@ impl OciUploader {
             .client
             .put(&url)
             .headers(self.auth_headers().await)
-            .header("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+            .header("Content-Type", content_type)
             .body(manifest_data)
             .send()
             .await?;

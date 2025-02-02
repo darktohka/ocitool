@@ -3,7 +3,7 @@ use crate::{
     spec::{
         config::{History, ImageConfig, RootFs},
         enums::{MediaType, PlatformOS},
-        index::{Manifest, Platform},
+        index::{ImageIndex, Manifest, Platform},
         manifest::{Descriptor, ImageManifest},
         plan::merge_image_plan_configs,
     },
@@ -115,7 +115,6 @@ impl PlanExecution {
 
     pub async fn execute(&mut self) {
         let mut manifests: Vec<Manifest> = vec![];
-        let mut manifest_blobs: Vec<Blob> = vec![];
 
         for platform in &self.plan.platforms {
             let mut layers: Vec<Layer> = vec![];
@@ -238,19 +237,19 @@ impl PlanExecution {
                     features: None,
                 }),
             });
-            manifest_blobs.push(manifest_blob);
-        }
 
-        for tag in &self.plan.tags {
-            for manifest in &manifest_blobs {
+            for tag in &self.plan.tags {
                 self.uploader
-                    .upload_manifest(manifest.data.clone(), tag)
+                    .upload_manifest(
+                        manifest_data.clone(),
+                        "application/vnd.oci.image.manifest.v1+json",
+                        tag,
+                    )
                     .await
                     .unwrap();
             }
         }
 
-        /*
         let index = ImageIndex {
             schema_version: 2,
             media_type: MediaType::OciImageIndexV1Json,
@@ -262,9 +261,13 @@ impl PlanExecution {
 
         for tag in &self.plan.tags {
             self.uploader
-                .upload_manifest(index_data.clone(), tag)
+                .upload_manifest(
+                    index_data.clone(),
+                    "application/vnd.oci.image.index.v1+json",
+                    tag,
+                )
                 .await
                 .unwrap();
-        }*/
+        }
     }
 }

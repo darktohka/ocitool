@@ -1,5 +1,5 @@
 {
-  "name": "ghcr.io/darktohka/ocitool",
+  "name": "darktohka/ocitool",
   "tags": ["latest"],
   "config": {
     "entrypoint": ["/ocitool"],
