@@ -33,6 +33,13 @@ struct Args {
     /// If not set, the DOCKER_PASSWORD environment variable will be used
     #[arg(short, long)]
     password: Option<String>,
+
+    /// Sets the compression level to use when compressing layers
+    /// If not set, the COMPRESSION_LEVEL environment variable will be used
+    /// If that is not set, the default compression level will be used
+    /// The compression level must be between 1 and 22
+    #[arg(short, long)]
+    compression_level: Option<i32>,
 }
 
 #[tokio::main]
@@ -51,6 +58,12 @@ async fn main() {
         .password
         .map(|s| s.to_string())
         .or_else(|| env::var("DOCKER_PASSWORD").ok());
+    let compression_level = args.compression_level.unwrap_or_else(|| {
+        env::var("COMPRESSION_LEVEL")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(19)
+    });
 
     let plan_path = Path::new(&args.plan);
     let plan = if plan_path.exists() {
@@ -79,7 +92,8 @@ async fn main() {
     let file = File::open(args.plan).expect("Failed to open plan file");
     let plan: ImagePlan = serde_json::from_reader(file).unwrap();
 
-    let mut execution = execution::PlanExecution::new(plan, service, username, password);
+    let mut execution =
+        execution::PlanExecution::new(plan, service, username, password, compression_level);
 
     execution.execute().await;
 }

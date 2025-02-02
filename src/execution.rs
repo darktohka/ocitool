@@ -23,6 +23,7 @@ use std::fs;
 pub struct PlanExecution {
     pub plan: ImagePlan,
     pub uploader: OciUploader,
+    pub compression_level: i32,
 }
 
 pub struct Blob {
@@ -64,6 +65,7 @@ impl PlanExecution {
         service: Option<String>,
         username: Option<String>,
         password: Option<String>,
+        compression_level: i32,
     ) -> Self {
         let uploader = OciUploader::new(
             &plan.get_registry_url(),
@@ -73,13 +75,17 @@ impl PlanExecution {
             password,
         );
 
-        PlanExecution { plan, uploader }
+        PlanExecution {
+            plan,
+            uploader,
+            compression_level,
+        }
     }
 
     async fn upload_tar(&self, tar_buffer: &Vec<u8>, comment: &str) -> (Blob, Layer) {
         let uncompressed_digest = sha256_digest(&tar_buffer);
 
-        let mut encoder = Encoder::new(Vec::new(), 0).unwrap();
+        let mut encoder = Encoder::new(Vec::new(), self.compression_level).unwrap();
         encoder.write_all(&tar_buffer).unwrap();
         let compressed_data = encoder.finish().unwrap();
         let digest = sha256_digest(&compressed_data);
