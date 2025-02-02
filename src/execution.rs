@@ -86,6 +86,10 @@ impl PlanExecution {
         let uncompressed_digest = sha256_digest(&tar_buffer);
 
         let mut encoder = Encoder::new(Vec::new(), self.compression_level).unwrap();
+
+        // Enable multithreading
+        encoder.multithread(num_cpus::get() as u32).unwrap();
+
         encoder.write_all(&tar_buffer).unwrap();
         let compressed_data = encoder.finish().unwrap();
         let digest = sha256_digest(&compressed_data);
