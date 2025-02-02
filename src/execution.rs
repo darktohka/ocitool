@@ -18,6 +18,7 @@ use tar::Builder;
 use zstd::stream::write::Encoder;
 
 use crate::uploader::OciUploader;
+use std::fs;
 
 pub struct PlanExecution {
     pub plan: ImagePlan,
@@ -74,6 +75,38 @@ impl PlanExecution {
 
         PlanExecution { plan, uploader }
     }
+
+    async fn upload_tar(&self, tar_buffer: &Vec<u8>, comment: &str) -> (Blob, Layer) {
+        let uncompressed_digest = sha256_digest(&tar_buffer);
+
+        let mut encoder = Encoder::new(Vec::new(), 0).unwrap();
+        encoder.write_all(&tar_buffer).unwrap();
+        let compressed_data = encoder.finish().unwrap();
+        let digest = sha256_digest(&compressed_data);
+
+        println!(
+            "Compressing layer: {}, original size: {}, compressed size: {} ({:.2}% of original size)",
+            digest,
+            tar_buffer.len(),
+            compressed_data.len(),
+            (compressed_data.len() as f64 / tar_buffer.len() as f64) * 100.0
+        );
+
+        let blob = Blob {
+            digest: digest.clone(),
+            data: compressed_data,
+        };
+
+        let layer = Layer {
+            uncompressed_digest,
+            digest: digest.clone(),
+            size: blob.data.len() as u64,
+            comment: comment.to_string(),
+        };
+
+        (blob, layer)
+    }
+
     pub async fn execute(&mut self) {
         let mut manifests: Vec<Manifest> = vec![];
 
@@ -104,6 +137,7 @@ impl PlanExecution {
                         );
 
                         let mut tar_buffer = Vec::new();
+
                         {
                             let mut tar_builder = Builder::new(&mut tar_buffer);
                             tar_builder.follow_symlinks(false);
@@ -120,38 +154,17 @@ impl PlanExecution {
                             tar_builder.finish().unwrap();
                         }
 
-                        let uncompressed_digest = sha256_digest(&tar_buffer);
-
-                        let mut encoder = Encoder::new(Vec::new(), 0).unwrap();
-                        encoder.write_all(&tar_buffer).unwrap();
-                        let compressed_data = encoder.finish().unwrap();
-                        let digest = sha256_digest(&compressed_data);
-
-                        println!(
-                            "Created layer: {}, original size: {}, compressed size: {} ({:.2}% of original size)",
-                            digest,
-                            tar_buffer.len(),
-                            compressed_data.len(),
-                            (compressed_data.len() as f64 / tar_buffer.len() as f64) * 100.0
-                        );
-
-                        let blob = Blob {
-                            digest: digest.clone(),
-                            data: compressed_data,
-                        };
-
-                        let layer = Layer {
-                            uncompressed_digest,
-                            digest: digest.clone(),
-                            size: blob.data.len() as u64,
-                            comment: layer.comment.clone(),
-                        };
-
+                        let layer_comment = layer.comment.clone();
+                        let (blob, new_layer) = self.upload_tar(&tar_buffer, &layer_comment).await;
                         self.uploader.upload_blob(&blob).await.unwrap();
-                        layers.push(layer);
+                        layers.push(new_layer);
                     }
-                    _ => {
-                        println!("Unsupported layer type");
+                    ImagePlanLayerType::Layer => {
+                        let tar_buffer = fs::read(&layer.source).unwrap();
+                        let layer_comment = layer.comment.clone();
+                        let (blob, new_layer) = self.upload_tar(&tar_buffer, &layer_comment).await;
+                        self.uploader.upload_blob(&blob).await.unwrap();
+                        layers.push(new_layer);
                     }
                 }
             }
