@@ -118,10 +118,21 @@ impl OciUploader {
             format!("{}?digest={}", location, blob.digest)
         };
 
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.extend(self.auth_headers().await);
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/octet-stream"),
+        );
+        headers.insert(
+            reqwest::header::CONTENT_LENGTH,
+            reqwest::header::HeaderValue::from(blob.data.len()),
+        );
+
         let request = self
             .client
             .put(upload_url)
-            .headers(self.auth_headers().await)
+            .headers(headers)
             .body(blob.data.clone());
 
         let response = request.send().await?;
@@ -151,7 +162,7 @@ impl OciUploader {
             .client
             .put(&url)
             .headers(self.auth_headers().await)
-            .header("Content-Type", "application/vnd.oci.image.index.v1+json")
+            .header("Content-Type", "application/vnd.oci.image.manifest.v1+json")
             .body(manifest_data)
             .send()
             .await?;

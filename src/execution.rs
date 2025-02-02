@@ -3,7 +3,7 @@ use crate::{
     spec::{
         config::{History, ImageConfig, RootFs},
         enums::{MediaType, PlatformOS},
-        index::{ImageIndex, Manifest, Platform},
+        index::{Manifest, Platform},
         manifest::{Descriptor, ImageManifest},
         plan::merge_image_plan_configs,
     },
@@ -115,6 +115,7 @@ impl PlanExecution {
 
     pub async fn execute(&mut self) {
         let mut manifests: Vec<Manifest> = vec![];
+        let mut manifest_blobs: Vec<Blob> = vec![];
 
         for platform in &self.plan.platforms {
             let mut layers: Vec<Layer> = vec![];
@@ -218,11 +219,11 @@ impl PlanExecution {
             };
 
             let manifest_data = manifest.to_json();
+
             let manifest_blob = Blob {
                 digest: sha256_digest(&manifest_data),
-                data: manifest_data,
+                data: manifest_data.clone(),
             };
-            self.uploader.upload_blob(&manifest_blob).await.unwrap();
 
             manifests.push(Manifest {
                 media_type: MediaType::OciImageManifestV1Json,
@@ -237,8 +238,19 @@ impl PlanExecution {
                     features: None,
                 }),
             });
+            manifest_blobs.push(manifest_blob);
         }
 
+        for tag in &self.plan.tags {
+            for manifest in &manifest_blobs {
+                self.uploader
+                    .upload_manifest(manifest.data.clone(), tag)
+                    .await
+                    .unwrap();
+            }
+        }
+
+        /*
         let index = ImageIndex {
             schema_version: 2,
             media_type: MediaType::OciImageIndexV1Json,
@@ -253,6 +265,6 @@ impl PlanExecution {
                 .upload_manifest(index_data.clone(), tag)
                 .await
                 .unwrap();
-        }
+        }*/
     }
 }

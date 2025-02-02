@@ -21,8 +21,9 @@ pub struct ImageIndex {
 }
 
 impl ImageIndex {
+    #[allow(dead_code)]
     pub fn to_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&self).expect("Failed to serialize ImageIndex")
+        cjson::to_vec(&self).expect("Failed to serialize ImageIndex")
     }
 }
 

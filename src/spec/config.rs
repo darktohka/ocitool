@@ -88,6 +88,6 @@ pub struct History {
 
 impl ImageConfig {
     pub fn to_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&self).expect("Failed to serialize ImageConfig")
+        cjson::to_vec(&self).expect("Failed to serialize ImageConfig")
     }
 }

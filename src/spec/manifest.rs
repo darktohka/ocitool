@@ -36,6 +36,6 @@ pub struct ImageManifest {
 
 impl ImageManifest {
     pub fn to_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&self).expect("Failed to serialize ImageManifest")
+        cjson::to_vec(&self).expect("Failed to serialize ImageManifest")
     }
 }
