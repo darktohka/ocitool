@@ -36,7 +36,7 @@ jobs:
         run: |
           cat <<EOF > oci.json
           {
-            "name": "darktohka/ocitool",
+            "name": "ghcr.io/darktohka/ocitool",
             "tags": ["latest"],
             "config": {
               "entrypoint": ["/ocitool"],
@@ -59,4 +59,4 @@ jobs:
             ]
           }
           EOF
-          docker run -v $(pwd):/srv ghcr.io/darktohka/ocitool --username "${{ secrets.DOCKER_USERNAME }}" --password "${{ secrets.DOCKER_PASSWORD }}"
+          docker run -v $(pwd):/srv ghcr.io/darktohka/ocitool --username "${{ secrets.DOCKER_USERNAME }}" --password "${{ secrets.GITHUB_TOKEN }}"
