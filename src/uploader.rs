@@ -1,5 +1,5 @@
 use crate::{
-    client::{OciClient, OciClientError},
+    client::{ImagePermissions, OciClient, OciClientError},
     execution::Blob,
 };
 use reqwest::{
@@ -60,7 +60,11 @@ impl OciUploader {
         let response = client
             .client
             .head(&url)
-            .headers(client.auth_headers(image_name).await?)
+            .headers(
+                client
+                    .auth_headers(image_name, ImagePermissions::Push)
+                    .await?,
+            )
             .send()
             .await?;
 
@@ -95,7 +99,9 @@ impl OciUploader {
             return Ok(());
         }
 
-        let mut headers = client.auth_headers(image_name).await?;
+        let mut headers = client
+            .auth_headers(image_name, ImagePermissions::Push)
+            .await?;
 
         let url = format!("{}/blobs/uploads/", client.get_image_url(image_name));
         let response = client
@@ -163,7 +169,11 @@ impl OciUploader {
         let response = client
             .client
             .put(&url)
-            .headers(client.auth_headers(image_name).await?)
+            .headers(
+                client
+                    .auth_headers(image_name, ImagePermissions::Push)
+                    .await?,
+            )
             .header("Content-Type", content_type)
             .body(manifest_data)
             .send()

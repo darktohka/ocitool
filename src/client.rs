@@ -6,13 +6,24 @@ use reqwest::{
     Client, StatusCode,
 };
 
+pub struct ImageToken {
+    token: String,
+    permissions: ImagePermissions,
+}
+
 pub struct OciClient {
     pub client: Client,
     pub registry: String,
     username: Option<String>,
     password: Option<String>,
     service: String,
-    image_bearer_map: HashMap<String, String>,
+    image_bearer_map: HashMap<String, ImageToken>,
+}
+
+#[derive(PartialEq, Clone)]
+pub enum ImagePermissions {
+    Pull,
+    Push,
 }
 
 #[derive(Debug, Clone)]
@@ -94,8 +105,17 @@ impl OciClient {
     pub async fn login_to_container_registry(
         &self,
         image_name: &str,
+        image_permissions: ImagePermissions,
     ) -> Result<String, OciClientError> {
-        let scope = format!("repository:{}:pull,push", image_name);
+        let scope = format!(
+            "repository:{}:{}",
+            image_name,
+            if image_permissions == ImagePermissions::Pull {
+                "pull"
+            } else {
+                "pull,push"
+            }
+        );
         let url = format!(
             "{}?service={}&scope={}",
             self.get_auth_url(),
@@ -151,23 +171,47 @@ impl OciClient {
         }
     }
 
-    pub async fn auth_headers(&mut self, image_name: &str) -> Result<HeaderMap, OciClientError> {
+    pub async fn login_to_registry(
+        &mut self,
+        image_name: &str,
+        image_permissions: ImagePermissions,
+    ) -> Result<String, OciClientError> {
+        let new_bearer = if self.is_github_registry() {
+            self.login_to_github_registry()
+        } else {
+            self.login_to_container_registry(image_name, image_permissions.clone())
+                .await
+        };
+
+        if let Ok(bearer) = &new_bearer {
+            self.image_bearer_map.insert(
+                image_name.to_string(),
+                ImageToken {
+                    token: bearer.clone(),
+                    permissions: image_permissions,
+                },
+            );
+        }
+
+        new_bearer
+    }
+
+    pub async fn auth_headers(
+        &mut self,
+        image_name: &str,
+        image_permissions: ImagePermissions,
+    ) -> Result<HeaderMap, OciClientError> {
         let actual_bearer = match self.image_bearer_map.get(image_name) {
-            Some(bearer) => Ok(bearer.to_string()),
-            None => {
-                let new_bearer = if self.is_github_registry() {
-                    self.login_to_github_registry()
+            Some(bearer) => {
+                if bearer.permissions == ImagePermissions::Pull
+                    && image_permissions == ImagePermissions::Push
+                {
+                    self.login_to_registry(image_name, image_permissions).await
                 } else {
-                    self.login_to_container_registry(image_name).await
-                };
-
-                if let Ok(bearer) = &new_bearer {
-                    self.image_bearer_map
-                        .insert(image_name.to_string(), bearer.clone());
+                    Ok(bearer.token.clone())
                 }
-
-                new_bearer
             }
+            None => self.login_to_registry(image_name, image_permissions).await,
         };
 
         match actual_bearer {
