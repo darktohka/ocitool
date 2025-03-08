@@ -155,18 +155,23 @@ impl OciClient {
         let actual_bearer = match self.image_bearer_map.get(image_name) {
             Some(bearer) => Ok(bearer.to_string()),
             None => {
-                if self.is_github_registry() {
+                let new_bearer = if self.is_github_registry() {
                     self.login_to_github_registry()
                 } else {
                     self.login_to_container_registry(image_name).await
+                };
+
+                if let Ok(bearer) = &new_bearer {
+                    self.image_bearer_map
+                        .insert(image_name.to_string(), bearer.clone());
                 }
+
+                new_bearer
             }
         };
 
         match actual_bearer {
             Ok(bearer) => {
-                self.image_bearer_map
-                    .insert(image_name.to_string(), bearer.clone());
                 let mut headers = HeaderMap::with_capacity(1);
                 headers.insert(AUTHORIZATION, HeaderValue::from_str(&bearer).unwrap());
 
