@@ -25,3 +25,10 @@ lto = true
 strip = true
 panic = "abort"
 
+
+[profile.release-strip]
+inherits = "release"
+lto = false
+strip = true
+panic = "abort"
+

@@ -1,113 +1,119 @@
-use crate::execution::Blob;
-use base64::{prelude::BASE64_STANDARD, Engine};
-use reqwest::{Client, StatusCode};
+use crate::{
+    client::{OciClient, OciClientError},
+    execution::Blob,
+};
+use reqwest::{
+    header::{HeaderValue, CONTENT_LENGTH, CONTENT_TYPE},
+    StatusCode,
+};
+use std::{collections::HashSet, error::Error};
+
+#[derive(Debug, Clone)]
+
+pub struct OciUploaderError(String);
+
+impl<'a> Error for OciUploaderError {}
+
+impl<'a> std::fmt::Display for OciUploaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 pub struct OciUploader {
-    registry: String,
-    service: String,
-    image_name: String,
-    username: Option<String>,
-    password: Option<String>,
-    auth_header: Option<String>,
-    uploaded_blobs: Vec<String>,
-    client: Client,
+    uploaded_blobs: HashSet<String>,
+}
+
+impl From<OciClientError> for OciUploaderError {
+    fn from(err: OciClientError) -> Self {
+        OciUploaderError(err.to_string())
+    }
+}
+
+impl From<reqwest::Error> for OciUploaderError {
+    fn from(err: reqwest::Error) -> Self {
+        OciUploaderError(err.to_string())
+    }
 }
 
 impl OciUploader {
-    pub fn get_image_url(name: &str) -> String {
-        let parts: Vec<&str> = name.split('/').collect();
-
-        if parts.len() > 2 {
-            parts[1..].join("/")
-        } else {
-            name.to_string()
-        }
-    }
-
-    pub fn get_auth_url(&self) -> String {
-        if self.registry.contains("registry-1.docker.io")
-            || self.registry.contains("registry.docker.io")
-        {
-            "https://auth.docker.io/token".to_string()
-        } else {
-            format!("{}/auth", self.registry)
-        }
-    }
-
-    pub fn new(
-        registry: &str,
-        service: &str,
-        image_name: &str,
-        username: Option<String>,
-        password: Option<String>,
-    ) -> Self {
-        let client = Client::builder()
-            .build()
-            .expect("Failed to build HTTP client");
-
+    pub fn new() -> Self {
         OciUploader {
-            registry: registry.to_string(),
-            service: service.to_string(),
-            image_name: OciUploader::get_image_url(image_name),
-            username,
-            password,
-            uploaded_blobs: vec![],
-            auth_header: None,
-            client,
+            uploaded_blobs: HashSet::new(),
         }
     }
 
-    async fn blob_exists(&mut self, blob: &Blob) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn blob_exists(
+        &mut self,
+        client: &mut OciClient,
+        image_name: &str,
+        blob: &Blob,
+    ) -> Result<bool, OciUploaderError> {
         if self.uploaded_blobs.contains(&blob.digest) {
             println!("Blob {} was already uploaded.", blob.digest);
             return Ok(true);
         }
 
         println!("Checking blob {}...", blob.digest);
-        let url = format!(
-            "{}/v2/{}/blobs/{}",
-            self.registry, self.image_name, blob.digest
-        );
-        let response = self
+
+        let url = format!("{}/blobs/{}", client.get_image_url(image_name), blob.digest);
+        let response = client
             .client
             .head(&url)
-            .headers(self.auth_headers().await)
+            .headers(client.auth_headers(image_name).await?)
             .send()
             .await?;
+
+        let status = response.status();
+
+        if status.is_server_error() {
+            return Err(OciUploaderError(format!(
+                "Failed to check blob: {}",
+                status
+            )));
+        }
 
         let exists = response.status() == StatusCode::OK;
 
         if exists {
-            self.uploaded_blobs.push(blob.digest.clone());
+            self.uploaded_blobs.insert(blob.digest.clone());
         }
 
         Ok(exists)
     }
 
-    pub async fn upload_blob(&mut self, blob: &Blob) -> Result<(), Box<dyn std::error::Error>> {
-        let exists = self.blob_exists(&blob).await?;
+    pub async fn upload_blob(
+        &mut self,
+        client: &mut OciClient,
+        image_name: &str,
+        blob: &Blob,
+    ) -> Result<(), OciUploaderError> {
+        let exists = self.blob_exists(client, image_name, &blob).await?;
 
         if exists {
             println!("Blob {} already exists.", blob.digest);
             return Ok(());
         }
 
-        let url = format!("{}/v2/{}/blobs/uploads/", self.registry, self.image_name);
-        let response = self
+        let mut headers = client.auth_headers(image_name).await?;
+
+        let url = format!("{}/blobs/uploads", client.get_image_url(image_name));
+        let response = client
             .client
             .post(&url)
-            .headers(self.auth_headers().await)
+            .headers(headers.clone())
             .send()
             .await?;
 
         let location = response
             .headers()
             .get("location")
-            .ok_or("Missing Location header")?
-            .to_str()?;
+            .ok_or(OciUploaderError("No location header".to_string()))?
+            .to_str()
+            .map_err(|e| OciUploaderError(e.to_string()))?;
 
         let location = if location.starts_with('/') {
-            format!("{}{}", self.registry, location)
+            format!("{}{}", client.registry, location)
         } else {
             location.to_string()
         };
@@ -118,18 +124,13 @@ impl OciUploader {
             format!("{}?digest={}", location, blob.digest)
         };
 
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.extend(self.auth_headers().await);
         headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/octet-stream"),
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
         );
-        headers.insert(
-            reqwest::header::CONTENT_LENGTH,
-            reqwest::header::HeaderValue::from(blob.data.len()),
-        );
+        headers.insert(CONTENT_LENGTH, HeaderValue::from(blob.data.len()));
 
-        let request = self
+        let request = client
             .client
             .put(upload_url)
             .headers(headers)
@@ -137,124 +138,46 @@ impl OciUploader {
 
         let response = request.send().await?;
 
-        if response.status() == StatusCode::CREATED {
-            self.uploaded_blobs.push(blob.digest.clone());
-            println!("Blob {} uploaded.", blob.digest.clone());
-            Ok(())
-        } else {
-            Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to upload blob: {}", response.status()),
-            )))
+        match response.status() {
+            StatusCode::CREATED => {
+                println!("Blob {} uploaded.", blob.digest);
+                self.uploaded_blobs.insert(blob.digest.clone());
+                Ok(())
+            }
+            code => Err(OciUploaderError(format!("Failed to upload blob: {}", code))),
         }
     }
 
     pub async fn upload_manifest(
-        &mut self,
+        &self,
+        client: &mut OciClient,
+        image_name: &str,
         manifest_data: Vec<u8>,
         content_type: &str,
         tag: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let url = format!("{}/v2/{}/manifests/{}", self.registry, self.image_name, tag);
+    ) -> Result<(), OciUploaderError> {
+        let url = format!("{}/manifests/{}", client.get_image_url(image_name), tag);
 
-        println!("Uploading {}:{}...", self.image_name, tag);
+        println!("Uploading {}:{}...", image_name, tag);
 
-        let response = self
+        let response = client
             .client
             .put(&url)
-            .headers(self.auth_headers().await)
+            .headers(client.auth_headers(image_name).await?)
             .header("Content-Type", content_type)
             .body(manifest_data)
             .send()
             .await?;
 
-        if response.status() == StatusCode::CREATED {
-            println!("Manifest uploaded successfully.");
-            Ok(())
-        } else {
-            Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to upload manifest: {}", response.status()),
-            )))
-        }
-    }
-
-    async fn auth_headers(&mut self) -> reqwest::header::HeaderMap {
-        if self.auth_header == None {
-            if self.registry.contains("ghcr.io") {
-                // On GitHub, we do not need to login again
-
-                if self.password.is_none() || self.password.as_ref().unwrap().is_empty() {
-                    self.password = Some(
-                        std::env::var("GITHUB_TOKEN")
-                            .expect("GITHUB_TOKEN environment variable not set"),
-                    );
-                }
-
-                self.auth_header = Some(
-                    format!(
-                        "Bearer {}",
-                        BASE64_STANDARD.encode(self.password.as_ref().unwrap())
-                    )
-                    .to_string(),
-                );
-            } else {
-                let scope = format!("repository:{}:pull,push", self.image_name);
-                let url = format!(
-                    "{}?service={}&scope={}",
-                    self.get_auth_url(),
-                    self.service,
-                    scope
-                );
-
-                let mut request = self.client.get(&url);
-
-                if let (Some(username), Some(password)) = (&self.username, &self.password) {
-                    request = request.basic_auth(username, Some(password));
-                    println!("Logging in as {}...", username);
-                } else {
-                    println!("Logging in anonymously...");
-                }
-
-                if let Some(response) = request.send().await.ok() {
-                    if response.status() == StatusCode::OK {
-                        if let Ok(response_text) = response.text().await {
-                            if let Ok(json) =
-                                serde_json::from_str::<serde_json::Value>(&response_text)
-                            {
-                                if let Some(token) =
-                                    json.get("access_token").and_then(|v| v.as_str())
-                                {
-                                    self.auth_header = Some(format!("Bearer {}", token));
-                                } else if let Some(token) =
-                                    json.get("token").and_then(|v| v.as_str())
-                                {
-                                    self.auth_header = Some(format!("Bearer {}", token));
-                                } else {
-                                    println!("Could not get token from JSON response");
-                                }
-                            } else {
-                                self.auth_header = Some(format!("Bearer {}", response_text));
-                            }
-                        } else {
-                            println!("Could not get token from text response");
-                        }
-                    } else {
-                        println!("Token login status not OK");
-                    }
-                } else {
-                    println!("Could not send login request");
-                }
+        match response.status() {
+            StatusCode::CREATED => {
+                println!("Manifest uploaded successfully.");
+                Ok(())
             }
+            code => Err(OciUploaderError(format!(
+                "Failed to upload manifest: {}",
+                code
+            ))),
         }
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(auth) = &self.auth_header {
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(auth).unwrap(),
-            );
-        }
-        headers
     }
 }

@@ -1,4 +1,5 @@
 use crate::{
+    client::OciClient,
     digest::sha256_digest,
     spec::{
         config::{History, ImageConfig, RootFs},
@@ -7,6 +8,7 @@ use crate::{
         manifest::{Descriptor, ImageManifest},
         plan::merge_image_plan_configs,
     },
+    uploader::OciUploaderError,
     walk::walk_with_filters,
 };
 use regex_lite::Regex;
@@ -22,6 +24,7 @@ use std::fs;
 
 pub struct PlanExecution {
     pub plan: ImagePlan,
+    pub client: OciClient,
     pub uploader: OciUploader,
     pub compression_level: i32,
 }
@@ -67,16 +70,17 @@ impl PlanExecution {
         password: Option<String>,
         compression_level: i32,
     ) -> Self {
-        let uploader = OciUploader::new(
-            &plan.get_registry_url(),
-            &service.unwrap_or_else(|| plan.get_service_url()),
-            &plan.name,
+        let client = OciClient::new(
+            plan.get_registry_url(),
             username,
             password,
+            service.unwrap_or_else(|| plan.get_service_url()),
         );
+        let uploader = OciUploader::new();
 
         PlanExecution {
             plan,
+            client,
             uploader,
             compression_level,
         }
@@ -117,14 +121,14 @@ impl PlanExecution {
         (blob, layer)
     }
 
-    pub async fn execute(&mut self) {
+    pub async fn execute(&mut self) -> Result<(), OciUploaderError> {
         let mut manifests: Vec<Manifest> = vec![];
 
         for platform in &self.plan.platforms {
             let mut layers: Vec<Layer> = vec![];
 
             for layer in &platform.layers {
-                match layer.layer_type {
+                let tar_buffer = match layer.layer_type {
                     ImagePlanLayerType::Directory => {
                         let whitelist_regexes: Vec<Regex> =
                             layer.whitelist.clone().map_or_else(Vec::new, |b| {
@@ -164,19 +168,17 @@ impl PlanExecution {
                             tar_builder.finish().unwrap();
                         }
 
-                        let layer_comment = layer.comment.clone();
-                        let (blob, new_layer) = self.upload_tar(&tar_buffer, &layer_comment).await;
-                        self.uploader.upload_blob(&blob).await.unwrap();
-                        layers.push(new_layer);
+                        tar_buffer
                     }
-                    ImagePlanLayerType::Layer => {
-                        let tar_buffer = fs::read(&layer.source).unwrap();
-                        let layer_comment = layer.comment.clone();
-                        let (blob, new_layer) = self.upload_tar(&tar_buffer, &layer_comment).await;
-                        self.uploader.upload_blob(&blob).await.unwrap();
-                        layers.push(new_layer);
-                    }
-                }
+                    ImagePlanLayerType::Layer => fs::read(&layer.source).unwrap(),
+                };
+
+                let layer_comment = layer.comment.clone();
+                let (blob, new_layer) = self.upload_tar(&tar_buffer, &layer_comment).await;
+                self.uploader
+                    .upload_blob(&mut self.client, &self.plan.name, &blob)
+                    .await?;
+                layers.push(new_layer);
             }
 
             let platform_config = merge_image_plan_configs(&self.plan.config, &platform.config);
@@ -204,7 +206,10 @@ impl PlanExecution {
                 digest: sha256_digest(&config_data),
                 data: config_data,
             };
-            self.uploader.upload_blob(&config_blob).await.unwrap();
+
+            self.uploader
+                .upload_blob(&mut self.client, &self.plan.name, &config_blob)
+                .await?;
 
             let manifest = ImageManifest {
                 schema_version: 2,
@@ -245,12 +250,13 @@ impl PlanExecution {
             for tag in &self.plan.tags {
                 self.uploader
                     .upload_manifest(
+                        &mut self.client,
+                        &self.plan.name,
                         manifest_data.clone(),
                         "application/vnd.oci.image.manifest.v1+json",
                         tag,
                     )
-                    .await
-                    .unwrap();
+                    .await?;
             }
         }
 
@@ -266,12 +272,15 @@ impl PlanExecution {
         for tag in &self.plan.tags {
             self.uploader
                 .upload_manifest(
+                    &mut self.client,
+                    &self.plan.name,
                     index_data.clone(),
                     "application/vnd.oci.image.index.v1+json",
                     tag,
                 )
-                .await
-                .unwrap();
+                .await?;
         }
+
+        Ok(())
     }
 }

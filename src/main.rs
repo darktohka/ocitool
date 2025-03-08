@@ -4,6 +4,7 @@ use std::env;
 use std::fs::File;
 use std::path::Path;
 use walkdir::WalkDir;
+mod client;
 mod digest;
 mod execution;
 mod spec;
@@ -95,5 +96,8 @@ async fn main() {
     let mut execution =
         execution::PlanExecution::new(plan, service, username, password, compression_level);
 
-    execution.execute().await;
+    if let Err(e) = execution.execute().await {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
 }
