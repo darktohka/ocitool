@@ -1,4 +1,3 @@
-use clap::{command, Parser};
 use spec::plan::ImagePlan;
 use std::env;
 use std::fs::File;
@@ -11,54 +10,40 @@ mod spec;
 mod uploader;
 mod walk;
 
-/// A simple CLI tool to build and push OCI images
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    /// Sets a custom plan filename to use
-    #[arg(long, default_value = "oci.json")]
-    plan: String,
+xflags::xflags! {
+    cmd app {
+        /// Sets a service to authenticate to the registry with
+        /// If not set, the DOCKER_SERVICE environment variable will be used
+        /// If that is not set, the registry URL will be used
+        optional service: String
 
-    /// Sets a service to authenticate to the registry with
-    /// If not set, the DOCKER_SERVICE environment variable will be used
-    /// If that is not set, the registry URL will be used
-    #[arg(short, long)]
-    service: Option<String>,
+        /// Sets the username to authenticate to the registry with
+        /// If not set, the DOCKER_USERNAME environment variable will be used
+        optional username: String
 
-    /// Sets the username to authenticate to the registry with
-    /// If not set, the DOCKER_USERNAME environment variable will be used
-    #[arg(short, long)]
-    username: Option<String>,
+        /// Sets the password to authenticate to the registry with
+        /// If not set, the DOCKER_PASSWORD environment variable will be used
+        optional password: String
 
-    /// Sets the password to authenticate to the registry with
-    /// If not set, the DOCKER_PASSWORD environment variable will be used
-    #[arg(short, long)]
-    password: Option<String>,
+        cmd upload {
+            /// Sets a custom plan filename to use
+            optional plan: String
 
-    /// Sets the compression level to use when compressing layers
-    /// If not set, the COMPRESSION_LEVEL environment variable will be used
-    /// If that is not set, the default compression level will be used
-    /// The compression level must be between 1 and 22
-    #[arg(short, long)]
-    compression_level: Option<i32>,
+            /// Sets the compression level to use when compressing layers
+            /// If not set, the COMPRESSION_LEVEL environment variable will be used
+            /// If that is not set, the default compression level will be used
+            /// The compression level must be between 1 and 22
+            optional compression_level: i32
+        }
+    }
 }
 
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
-
-    let service = args
-        .service
-        .map(|s| s.to_string())
-        .or_else(|| env::var("DOCKER_SERVICE").ok());
-    let username = args
-        .username
-        .map(|s| s.to_string())
-        .or_else(|| env::var("DOCKER_USERNAME").ok());
-    let password = args
-        .password
-        .map(|s| s.to_string())
-        .or_else(|| env::var("DOCKER_PASSWORD").ok());
+async fn upload_command(
+    args: &Upload,
+    service: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+) {
     let compression_level = args.compression_level.unwrap_or_else(|| {
         env::var("COMPRESSION_LEVEL")
             .ok()
@@ -66,9 +51,10 @@ async fn main() {
             .unwrap_or(19)
     });
 
-    let plan_path = Path::new(&args.plan);
+    let plan = args.plan.clone().unwrap_or_else(|| "oci.json".to_string());
+    let plan_path = Path::new(&plan);
     let plan = if plan_path.exists() {
-        args.plan.clone()
+        plan
     } else {
         let plan_basename = plan_path.file_name().expect("Invalid plan filename");
         WalkDir::new(env::current_dir().unwrap())
@@ -84,13 +70,14 @@ async fn main() {
 
     println!("Executing plan: {}", plan);
 
+    // Set the current directory to the plan file's directory
     if let Some(parent) = Path::new(&plan).parent() {
         if parent.exists() {
             env::set_current_dir(parent).expect("Failed to set current directory");
         }
     }
 
-    let file = File::open(args.plan).expect("Failed to open plan file");
+    let file = File::open(plan).expect("Failed to open plan file");
     let plan: ImagePlan = serde_json::from_reader(file).unwrap();
 
     let mut execution =
@@ -99,5 +86,31 @@ async fn main() {
     if let Err(e) = execution.execute().await {
         eprintln!("Error: {}", e);
         std::process::exit(1);
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let args = App::from_env_or_exit();
+
+    let service = args
+        .service
+        .map(|s| s.to_string())
+        .or_else(|| env::var("DOCKER_SERVICE").ok());
+    let username = args
+        .username
+        .map(|s| s.to_string())
+        .or_else(|| env::var("DOCKER_USERNAME").ok());
+    let password = args
+        .password
+        .map(|s| s.to_string())
+        .or_else(|| env::var("DOCKER_PASSWORD").ok());
+
+    match args.subcommand {
+        AppCmd::Upload(upload) => upload_command(&upload, service, username, password).await,
+        _ => {
+            eprintln!("No subcommand specified");
+            std::process::exit(1);
+        }
     }
 }
