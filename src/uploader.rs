@@ -97,7 +97,7 @@ impl OciUploader {
 
         let mut headers = client.auth_headers(image_name).await?;
 
-        let url = format!("{}/blobs/uploads", client.get_image_url(image_name));
+        let url = format!("{}/blobs/uploads/", client.get_image_url(image_name));
         let response = client
             .client
             .post(&url)
