@@ -11,31 +11,32 @@ mod uploader;
 mod walk;
 
 xflags::xflags! {
+    /// Uploads an OCI image to a registry
     cmd app {
         /// Sets a service to authenticate to the registry with
         /// If not set, the DOCKER_SERVICE environment variable will be used
         /// If that is not set, the registry URL will be used
-        optional service: String
+        optional -s, --service service: String
 
         /// Sets the username to authenticate to the registry with
         /// If not set, the DOCKER_USERNAME environment variable will be used
-        optional username: String
+        optional -u, --username username: String
 
         /// Sets the password to authenticate to the registry with
         /// If not set, the DOCKER_PASSWORD environment variable will be used
-        optional password: String
+        optional -p, --password password: String
 
-        cmd upload {
+        default cmd upload {
             /// Sets a custom plan filename to use
-            optional plan: String
+            optional --plan plan: String
 
             /// Sets the compression level to use when compressing layers
             /// If not set, the COMPRESSION_LEVEL environment variable will be used
             /// If that is not set, the default compression level will be used
             /// The compression level must be between 1 and 22
-            optional compression_level: i32
+            optional -c, --compression-level compression_level: i32
         }
-    }
+}
 }
 
 async fn upload_command(

@@ -3,7 +3,7 @@ use crate::{
     execution::Blob,
 };
 use reqwest::{
-    header::{HeaderValue, CONTENT_LENGTH, CONTENT_TYPE},
+    header::{CONTENT_LENGTH, CONTENT_TYPE},
     StatusCode,
 };
 use std::{collections::HashSet, error::Error};
