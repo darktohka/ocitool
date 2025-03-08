@@ -99,7 +99,7 @@ impl OciUploader {
             return Ok(());
         }
 
-        let mut headers = client
+        let headers = client
             .auth_headers(image_name, ImagePermissions::Push)
             .await?;
 
@@ -130,16 +130,12 @@ impl OciUploader {
             format!("{}?digest={}", location, blob.digest)
         };
 
-        headers.insert(
-            CONTENT_TYPE,
-            HeaderValue::from_static("application/octet-stream"),
-        );
-        headers.insert(CONTENT_LENGTH, HeaderValue::from(blob.data.len()));
-
         let request = client
             .client
             .put(upload_url)
             .headers(headers)
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .header(CONTENT_LENGTH, blob.data.len() as u64)
             .body(blob.data.clone());
 
         let response = request.send().await?;
