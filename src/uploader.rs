@@ -1,51 +1,34 @@
 use crate::{
     client::{ImagePermissions, OciClient, OciClientError},
     execution::Blob,
+    macros::{impl_error, impl_from_error},
 };
 use reqwest::{
     header::{CONTENT_LENGTH, CONTENT_TYPE},
     StatusCode,
 };
-use std::{collections::HashSet, error::Error};
-
-#[derive(Debug, Clone)]
-
-pub struct OciUploaderError(String);
-
-impl<'a> Error for OciUploaderError {}
-
-impl<'a> std::fmt::Display for OciUploaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
+use std::{collections::HashSet, sync::Arc};
+use tokio::sync::Mutex;
 
 pub struct OciUploader {
+    client: Arc<Mutex<OciClient>>,
     uploaded_blobs: HashSet<String>,
 }
 
-impl From<OciClientError> for OciUploaderError {
-    fn from(err: OciClientError) -> Self {
-        OciUploaderError(err.to_string())
-    }
-}
-
-impl From<reqwest::Error> for OciUploaderError {
-    fn from(err: reqwest::Error) -> Self {
-        OciUploaderError(err.to_string())
-    }
-}
+impl_error!(OciUploaderError);
+impl_from_error!(OciClientError, OciUploaderError);
+impl_from_error!(reqwest::Error, OciUploaderError);
 
 impl OciUploader {
-    pub fn new() -> Self {
+    pub fn new(client: Arc<Mutex<OciClient>>) -> Self {
         OciUploader {
+            client,
             uploaded_blobs: HashSet::new(),
         }
     }
 
     async fn blob_exists(
         &mut self,
-        client: &mut OciClient,
         image_name: &str,
         blob: &Blob,
     ) -> Result<bool, OciUploaderError> {
@@ -55,6 +38,8 @@ impl OciUploader {
         }
 
         println!("Checking blob {}...", blob.digest);
+
+        let mut client = self.client.lock().await;
 
         let url = format!("{}/blobs/{}", client.get_image_url(image_name), blob.digest);
         let response = client
@@ -77,7 +62,7 @@ impl OciUploader {
             )));
         }
 
-        let exists = response.status() == StatusCode::OK;
+        let exists = status == StatusCode::OK;
 
         if exists {
             self.uploaded_blobs.insert(blob.digest.clone());
@@ -88,17 +73,17 @@ impl OciUploader {
 
     pub async fn upload_blob(
         &mut self,
-        client: &mut OciClient,
         image_name: &str,
         blob: &Blob,
     ) -> Result<(), OciUploaderError> {
-        let exists = self.blob_exists(client, image_name, &blob).await?;
+        let exists = self.blob_exists(image_name, &blob).await?;
 
         if exists {
             println!("Blob {} already exists.", blob.digest);
             return Ok(());
         }
 
+        let mut client = self.client.lock().await;
         let headers = client
             .auth_headers(image_name, ImagePermissions::Push)
             .await?;
@@ -152,12 +137,12 @@ impl OciUploader {
 
     pub async fn upload_manifest(
         &self,
-        client: &mut OciClient,
         image_name: &str,
         manifest_data: Vec<u8>,
         content_type: &str,
         tag: &str,
     ) -> Result<(), OciUploaderError> {
+        let mut client = self.client.lock().await;
         let url = format!("{}/manifests/{}", client.get_image_url(image_name), tag);
 
         println!("Uploading {}:{}...", image_name, tag);

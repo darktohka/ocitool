@@ -1,18 +1,25 @@
+use downloader::OciDownloaderError;
+use platform::PlatformMatcher;
 use spec::plan::ImagePlan;
 use std::env;
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use walkdir::WalkDir;
 mod client;
 mod digest;
+mod downloader;
 mod execution;
+mod macros;
+mod platform;
 mod spec;
 mod uploader;
 mod walk;
 
 xflags::xflags! {
     /// Uploads an OCI image to a registry
-    cmd app {
+    cmd ocitool {
         /// Sets a service to authenticate to the registry with
         /// If not set, the DOCKER_SERVICE environment variable will be used
         /// If that is not set, the registry URL will be used
@@ -35,6 +42,13 @@ xflags::xflags! {
             /// If that is not set, the default compression level will be used
             /// The compression level must be between 1 and 22
             optional -c, --compression-level compression_level: i32
+        }
+
+        cmd run {
+            /// Sets the image name to run
+            required --image image: String
+            repeated --volume volumes: String
+            optional --entrypoint entrypoint: String
         }
 }
 }
@@ -81,8 +95,13 @@ async fn upload_command(
     let file = File::open(plan).expect("Failed to open plan file");
     let plan: ImagePlan = serde_json::from_reader(file).unwrap();
 
-    let mut execution =
-        execution::PlanExecution::new(plan, service, username, password, compression_level);
+    let client = Arc::new(Mutex::new(client::OciClient::new(
+        plan.get_registry_url(),
+        username,
+        password,
+        service.unwrap_or_else(|| plan.get_service_url()),
+    )));
+    let mut execution = execution::PlanExecution::new(plan, client, compression_level);
 
     if let Err(e) = execution.execute().await {
         eprintln!("Error: {}", e);
@@ -90,9 +109,83 @@ async fn upload_command(
     }
 }
 
+async fn run_command(
+    args: &Run,
+    service: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+) {
+    let image_name = args.image.clone();
+    // let volumes = args.volume.clone();
+
+    let split = image_name.split('/');
+    let parts: Vec<&str> = split.collect();
+
+    let registry = if parts.len() == 3 {
+        format!("https://{}", parts[0])
+    } else {
+        "https://registry-1.docker.io".to_string()
+    };
+
+    let actual_image_name_with_tag = if parts.len() == 3 {
+        parts[1..].join("/")
+    } else {
+        image_name.clone()
+    };
+
+    let actual_image_name = actual_image_name_with_tag.split(':').nth(0).unwrap();
+    let tag = actual_image_name_with_tag
+        .split(':')
+        .nth(1)
+        .unwrap_or("latest");
+    let fixed_image_name = if image_name.contains('/') {
+        actual_image_name.to_string()
+    } else {
+        format!("library/{}", actual_image_name)
+    };
+
+    let service = if let Some(arg_service) = service {
+        arg_service
+    } else if parts.len() > 2 {
+        parts[0].to_string()
+    } else {
+        "registry.docker.io".to_string()
+    };
+
+    let client = Arc::new(Mutex::new(client::OciClient::new(
+        registry, username, password, service,
+    )));
+    let downloader = downloader::OciDownloader::new(client);
+
+    let index = downloader
+        .download_index(&fixed_image_name, tag)
+        .await
+        .unwrap();
+
+    let platform_matcher = PlatformMatcher::new();
+    let manifest = platform_matcher
+        .find_manifest(&index.manifests)
+        .ok_or(OciDownloaderError("No matching platform found".to_string()))
+        .unwrap();
+
+    let downloaded_manifest = downloader
+        .download_manifest(&fixed_image_name, &manifest.digest)
+        .await
+        .unwrap();
+
+    println!("Manifest: {:?}", downloaded_manifest);
+
+    let downloaded_config = downloader
+        .download_config(&fixed_image_name, &downloaded_manifest.config.digest)
+        .await
+        .unwrap();
+
+    println!("Config: {:?}", downloaded_config);
+}
+
 #[tokio::main]
 async fn main() {
-    let args = App::from_env_or_exit();
+    let args = Ocitool::from_env_or_exit();
 
     let service = args
         .service
@@ -108,10 +201,7 @@ async fn main() {
         .or_else(|| env::var("DOCKER_PASSWORD").ok());
 
     match args.subcommand {
-        AppCmd::Upload(upload) => upload_command(&upload, service, username, password).await,
-        _ => {
-            eprintln!("No subcommand specified");
-            std::process::exit(1);
-        }
+        OcitoolCmd::Upload(upload) => upload_command(&upload, service, username, password).await,
+        OcitoolCmd::Run(run) => run_command(&run, service, username, password).await,
     }
 }

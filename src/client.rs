@@ -78,6 +78,7 @@ impl OciClient {
     }
 
     pub fn get_bearer(&self, token: &str) -> String {
+        println!("token: {}", token);
         format!("Bearer {}", token)
     }
 

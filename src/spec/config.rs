@@ -4,7 +4,7 @@ use time::OffsetDateTime;
 
 use super::enums::{PlatformArchitecture, PlatformOS};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ImageConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(with = "time::serde::rfc3339::option")]
@@ -32,7 +32,7 @@ pub struct ImageConfig {
     pub history: Option<Vec<History>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     #[serde(rename = "User", skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
@@ -64,14 +64,14 @@ pub struct Config {
     pub healthcheck: Option<HashMap<String, String>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RootFs {
     #[serde(rename = "type")]
     pub fs_type: String,
     pub diff_ids: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct History {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(with = "time::serde::rfc3339::option")]

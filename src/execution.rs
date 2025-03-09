@@ -13,9 +13,10 @@ use crate::{
 };
 use regex_lite::Regex;
 use time::OffsetDateTime;
+use tokio::sync::Mutex;
 
 use crate::spec::plan::{ImagePlan, ImagePlanLayerType};
-use std::io::Write;
+use std::{io::Write, sync::Arc};
 use tar::Builder;
 use zstd::stream::write::Encoder;
 
@@ -24,7 +25,6 @@ use std::fs;
 
 pub struct PlanExecution {
     pub plan: ImagePlan,
-    pub client: OciClient,
     pub uploader: OciUploader,
     pub compression_level: i32,
 }
@@ -63,24 +63,11 @@ impl Layer {
 }
 
 impl PlanExecution {
-    pub fn new(
-        plan: ImagePlan,
-        service: Option<String>,
-        username: Option<String>,
-        password: Option<String>,
-        compression_level: i32,
-    ) -> Self {
-        let client = OciClient::new(
-            plan.get_registry_url(),
-            username,
-            password,
-            service.unwrap_or_else(|| plan.get_service_url()),
-        );
-        let uploader = OciUploader::new();
+    pub fn new(plan: ImagePlan, client: Arc<Mutex<OciClient>>, compression_level: i32) -> Self {
+        let uploader = OciUploader::new(client);
 
         PlanExecution {
             plan,
-            client,
             uploader,
             compression_level,
         }
@@ -175,9 +162,7 @@ impl PlanExecution {
 
                 let layer_comment = layer.comment.clone();
                 let (blob, new_layer) = self.upload_tar(&tar_buffer, &layer_comment).await;
-                self.uploader
-                    .upload_blob(&mut self.client, &self.plan.name, &blob)
-                    .await?;
+                self.uploader.upload_blob(&self.plan.name, &blob).await?;
                 layers.push(new_layer);
             }
 
@@ -208,7 +193,7 @@ impl PlanExecution {
             };
 
             self.uploader
-                .upload_blob(&mut self.client, &self.plan.name, &config_blob)
+                .upload_blob(&self.plan.name, &config_blob)
                 .await?;
 
             let manifest = ImageManifest {
@@ -250,7 +235,6 @@ impl PlanExecution {
             for tag in &self.plan.tags {
                 self.uploader
                     .upload_manifest(
-                        &mut self.client,
                         &self.plan.name,
                         manifest_data.clone(),
                         "application/vnd.oci.image.manifest.v1+json",
@@ -272,7 +256,6 @@ impl PlanExecution {
         for tag in &self.plan.tags {
             self.uploader
                 .upload_manifest(
-                    &mut self.client,
                     &self.plan.name,
                     index_data.clone(),
                     "application/vnd.oci.image.index.v1+json",

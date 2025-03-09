@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use super::enums::MediaType;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Descriptor {
     #[serde(rename = "mediaType")]
     pub media_type: MediaType,
@@ -15,7 +15,7 @@ pub struct Descriptor {
     pub data: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ImageManifest {
     #[serde(rename = "schemaVersion")]
     pub schema_version: u32,

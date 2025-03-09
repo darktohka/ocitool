@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum MediaType {
     #[serde(rename = "application/vnd.oci.image.index.v1+json")]
@@ -17,7 +17,7 @@ pub enum MediaType {
     OciImageLayerV1Tar,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum PlatformArchitecture {
     #[serde(rename = "amd64")]
     Amd64,
@@ -31,6 +31,8 @@ pub enum PlatformArchitecture {
     Wasm,
     #[serde(rename = "ppc64")]
     Ppc64,
+    #[serde(rename = "ppc64le")]
+    Ppc64Le,
     #[serde(rename = "loong64")]
     Loong64,
     #[serde(rename = "mips")]
@@ -45,9 +47,11 @@ pub enum PlatformArchitecture {
     Riscv64,
     #[serde(rename = "s390x")]
     S390x,
+    #[serde(rename = "unknown")]
+    Unknown,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum PlatformOS {
     #[serde(rename = "aix")]
     Aix,
@@ -79,4 +83,6 @@ pub enum PlatformOS {
     Wasip1,
     #[serde(rename = "windows")]
     Windows,
+    #[serde(rename = "unknown")]
+    Unknown,
 }

@@ -2,7 +2,7 @@ use crate::spec::enums::{MediaType, PlatformArchitecture, PlatformOS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ImageIndex {
     #[serde(rename = "schemaVersion")]
     pub schema_version: u32,
@@ -27,7 +27,7 @@ impl ImageIndex {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Manifest {
     #[serde(rename = "mediaType")]
     pub media_type: MediaType,
@@ -38,7 +38,7 @@ pub struct Manifest {
     pub platform: Option<Platform>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Platform {
     pub architecture: PlatformArchitecture,
     pub os: PlatformOS,
