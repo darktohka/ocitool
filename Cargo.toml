@@ -19,6 +19,8 @@ cjson = "0"
 num_cpus = "1"
 xflags = "0"
 ring = "<0.17.13" # 0.17.13 does not build correctly right now
+flate2 = { version = "1", features = ["zlib-rs"], default-features = false }
+tempfile = "3.18.0"
 
 [profile.release-lto]
 inherits = "release"
