@@ -21,6 +21,7 @@ xflags = "0"
 ring = "<0.17.13" # 0.17.13 does not build correctly right now
 flate2 = { version = "1", features = ["zlib-rs"], default-features = false }
 tempfile = "3.18.0"
+dirs = "6.0.0"
 
 [profile.release-lto]
 inherits = "release"

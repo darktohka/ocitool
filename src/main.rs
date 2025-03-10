@@ -51,6 +51,9 @@ xflags::xflags! {
             required --image image: String
             repeated --volume volumes: String
             optional --entrypoint entrypoint: String
+
+            /// Disables the on-disk cache
+            optional --no-cache
         }
 }
 }
@@ -157,7 +160,7 @@ async fn run_command(
     let client = Arc::new(Mutex::new(client::OciClient::new(
         registry, username, password, service,
     )));
-    let downloader = downloader::OciDownloader::new(client);
+    let downloader = downloader::OciDownloader::new(client, args.no_cache);
 
     let index = downloader
         .download_index(&fixed_image_name, tag)
