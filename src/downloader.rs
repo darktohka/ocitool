@@ -28,7 +28,7 @@ impl OciDownloader {
             None => PathBuf::from("/tmp/ocitool"),
         };
         let blob_dir = cache_dir.join("blobs");
-        let layer_dir = blob_dir.join("layers");
+        let layer_dir = cache_dir.join("layers");
 
         OciDownloader {
             client,
@@ -212,15 +212,24 @@ impl OciDownloader {
         }
     }
 
-    pub async fn extract_layer_to(
+    pub fn get_layer_dir(&self, digest: &str) -> PathBuf {
+        self.layer_dir.join(digest.replace(":", "-"))
+    }
+
+    pub async fn extract_layer(
         &self,
         image_name: &str,
         digest: &str,
         media_type: &MediaType,
-        dest_dir: &PathBuf,
     ) -> Result<(), OciDownloaderError> {
+        let dest_dir = self.get_layer_dir(digest);
+
+        if dest_dir.is_dir() {
+            return Ok(());
+        }
+
         if let Some(blob) = self.load_blob_cache(digest).await {
-            self.extract_layer_bytes_to(&blob[..], media_type, dest_dir)
+            self.extract_layer_bytes_to(&blob[..], media_type, &dest_dir)
                 .await?;
 
             return Ok(());
@@ -252,7 +261,7 @@ impl OciDownloader {
 
         let bytes = response.bytes().await?;
         self.write_blob_cache(digest, &bytes)?;
-        self.extract_layer_bytes_to(bytes.as_ref(), media_type, dest_dir)
+        self.extract_layer_bytes_to(bytes.as_ref(), media_type, &dest_dir)
             .await?;
 
         Ok(())

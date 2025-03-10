@@ -1,12 +1,10 @@
 use downloader::OciDownloaderError;
 use platform::PlatformMatcher;
 use spec::plan::ImagePlan;
-use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use tempfile::tempdir;
 use tokio::sync::Mutex;
 use walkdir::WalkDir;
 mod client;
@@ -187,30 +185,13 @@ async fn run_command(
 
     println!("Config: {:?}", downloaded_config);
 
-    let layer_to_tmpdir = downloaded_manifest
-        .layers
-        .iter()
-        .map(|layer| {
-            let tmp_dir = tempdir().expect("Failed to create temporary directory");
-            (layer.digest.clone(), tmp_dir)
-        })
-        .collect::<HashMap<_, _>>();
-
     for layer in downloaded_manifest.layers {
-        let tmp_dir = layer_to_tmpdir.get(&layer.digest).unwrap();
-        let layer_path = tmp_dir.path().to_path_buf();
-
         downloader
-            .extract_layer_to(
-                &fixed_image_name,
-                &layer.digest,
-                &layer.media_type,
-                &layer_path,
-            )
+            .extract_layer(&fixed_image_name, &layer.digest, &layer.media_type)
             .await
             .expect("Failed to extract layer");
 
-        println!("Extracted layer {} to {:?}", layer.digest, layer_path);
+        println!("Extracted layer {}", layer.digest);
     }
 }
 
