@@ -1,6 +1,9 @@
 use crate::{
     client::OciClient,
     digest::sha256_digest,
+    downloader::OciDownloader,
+    parser::ParsedImage,
+    platform::PlatformMatcher,
     spec::{
         config::{History, ImageConfig, RootFs},
         enums::{MediaType, PlatformOS},
@@ -25,6 +28,7 @@ use std::fs;
 
 pub struct PlanExecution {
     pub plan: ImagePlan,
+    pub downloader: OciDownloader,
     pub uploader: OciUploader,
     pub compression_level: i32,
 }
@@ -63,12 +67,16 @@ impl Layer {
 }
 
 impl PlanExecution {
-    pub fn new(plan: ImagePlan, client: Arc<Mutex<OciClient>>, compression_level: i32) -> Self {
-        let uploader = OciUploader::new(client);
-
+    pub fn new(
+        plan: ImagePlan,
+        client: Arc<Mutex<OciClient>>,
+        no_cache: bool,
+        compression_level: i32,
+    ) -> Self {
         PlanExecution {
             plan,
-            uploader,
+            downloader: OciDownloader::new(client.clone(), no_cache),
+            uploader: OciUploader::new(client),
             compression_level,
         }
     }
@@ -115,7 +123,7 @@ impl PlanExecution {
             let mut layers: Vec<Layer> = vec![];
 
             for layer in &platform.layers {
-                let tar_buffer = match layer.layer_type {
+                let tar_buffers = match layer.layer_type {
                     ImagePlanLayerType::Directory => {
                         let whitelist_regexes: Vec<Regex> =
                             layer.whitelist.clone().map_or_else(Vec::new, |b| {
@@ -155,15 +163,55 @@ impl PlanExecution {
                             tar_builder.finish().unwrap();
                         }
 
-                        tar_buffer
+                        vec![tar_buffer]
                     }
-                    ImagePlanLayerType::Layer => fs::read(&layer.source).unwrap(),
+                    ImagePlanLayerType::Layer => vec![fs::read(&layer.source).unwrap()],
+                    ImagePlanLayerType::Image => {
+                        let image_name = layer.source.clone();
+                        let image = ParsedImage::from_image_name(&image_name);
+
+                        let index = self
+                            .downloader
+                            .download_index(&image.library_name, &image.tag)
+                            .await
+                            .unwrap();
+
+                        let platform_matcher =
+                            PlatformMatcher::match_architecture(platform.architecture.clone());
+
+                        let manifest = platform_matcher
+                            .find_manifest(&index.manifests)
+                            .ok_or(OciUploaderError("No matching platform found".to_string()))
+                            .unwrap();
+
+                        let downloaded_manifest: ImageManifest = self
+                            .downloader
+                            .download_manifest(&image.library_name, &manifest.digest)
+                            .await
+                            .unwrap();
+
+                        let mut tar_layers: Vec<Vec<u8>> = vec![];
+
+                        for layer in downloaded_manifest.layers {
+                            let layer_data = self
+                                .downloader
+                                .download_layer(&image.library_name, &layer.digest)
+                                .await
+                                .unwrap();
+
+                            tar_layers.push(layer_data);
+                        }
+
+                        tar_layers
+                    }
                 };
 
-                let layer_comment = layer.comment.clone();
-                let (blob, new_layer) = self.upload_tar(&tar_buffer, &layer_comment).await;
-                self.uploader.upload_blob(&self.plan.name, &blob).await?;
-                layers.push(new_layer);
+                for tar_buffer in tar_buffers {
+                    let layer_comment = layer.comment.clone();
+                    let (blob, new_layer) = self.upload_tar(&tar_buffer, &layer_comment).await;
+                    self.uploader.upload_blob(&self.plan.name, &blob).await?;
+                    layers.push(new_layer);
+                }
             }
 
             let platform_config = merge_image_plan_configs(&self.plan.config, &platform.config);

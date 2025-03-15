@@ -38,6 +38,9 @@ xflags::xflags! {
         /// If not set, the DOCKER_PASSWORD environment variable will be used
         optional -p, --password password: String
 
+        /// Disables the on-disk cache
+        optional --no-cache
+
         default cmd upload {
             /// Sets a custom plan filename to use
             optional --plan plan: String
@@ -65,8 +68,7 @@ xflags::xflags! {
             /// Optional working directory
             optional -w,--workdir workdir: String
 
-            /// Disables the on-disk cache
-            optional --no-cache
+            /// Disables mounting the system directories (/proc, /sys, /dev)
             optional --no-mount-system
         }
 }
@@ -74,6 +76,7 @@ xflags::xflags! {
 
 async fn upload_command(
     args: &Upload,
+    no_cache: bool,
     service: Option<String>,
     username: Option<String>,
     password: Option<String>,
@@ -120,7 +123,7 @@ async fn upload_command(
         password,
         service.unwrap_or_else(|| plan.get_service_url()),
     )));
-    let mut execution = execution::PlanExecution::new(plan, client, compression_level);
+    let mut execution = execution::PlanExecution::new(plan, client, no_cache, compression_level);
 
     if let Err(e) = execution.execute().await {
         eprintln!("Error: {}", e);
@@ -130,6 +133,7 @@ async fn upload_command(
 
 async fn run_command(
     args: &Run,
+    no_cache: bool,
     service: Option<String>,
     username: Option<String>,
     password: Option<String>,
@@ -153,7 +157,7 @@ async fn run_command(
         password,
         service,
     )));
-    let downloader = downloader::OciDownloader::new(client, args.no_cache);
+    let downloader = downloader::OciDownloader::new(client, no_cache);
 
     let index = downloader
         .download_index(&image.library_name, &image.tag)
@@ -222,7 +226,9 @@ async fn main() {
         .or_else(|| env::var("DOCKER_PASSWORD").ok());
 
     match args.subcommand {
-        OcitoolCmd::Upload(upload) => upload_command(&upload, service, username, password).await,
-        OcitoolCmd::Run(run) => run_command(&run, service, username, password).await,
+        OcitoolCmd::Upload(upload) => {
+            upload_command(&upload, args.no_cache, service, username, password).await
+        }
+        OcitoolCmd::Run(run) => run_command(&run, args.no_cache, service, username, password).await,
     }
 }

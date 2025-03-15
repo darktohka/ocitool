@@ -110,6 +110,8 @@ pub enum ImagePlanLayerType {
     Layer,
     #[serde(rename = "dir")]
     Directory,
+    #[serde(rename = "image")]
+    Image,
 }
 
 #[derive(Serialize, Deserialize)]

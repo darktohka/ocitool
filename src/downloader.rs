@@ -255,4 +255,42 @@ impl OciDownloader {
 
         Ok(())
     }
+
+    pub async fn download_layer(
+        &self,
+        image_name: &str,
+        digest: &str,
+    ) -> Result<Vec<u8>, OciDownloaderError> {
+        if let Some(blob) = self.load_blob_cache(digest).await {
+            return Ok(blob);
+        }
+
+        let mut client = self.client.lock().await;
+        let url = format!("{}/blobs/{}", client.get_image_url(image_name), digest);
+        println!("Downloading layer {}:{}...", image_name, digest);
+
+        let response = client
+            .client
+            .get(&url)
+            .headers(
+                client
+                    .auth_headers(image_name, ImagePermissions::Pull)
+                    .await?,
+            )
+            .send()
+            .await?;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            return Err(OciDownloaderError(format!(
+                "Failed to download layer: {}",
+                status
+            )));
+        }
+
+        let bytes = response.bytes().await?;
+        self.write_blob_cache(digest, &bytes)?;
+        Ok(bytes.to_vec())
+    }
 }

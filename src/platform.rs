@@ -24,6 +24,10 @@ impl PlatformMatcher {
         PlatformMatcher { platform }
     }
 
+    pub fn match_architecture(platform: PlatformArchitecture) -> Self {
+        PlatformMatcher { platform }
+    }
+
     pub fn matches(&self, image_platform: &PlatformArchitecture) -> bool {
         self.platform == *image_platform
     }
