@@ -21,9 +21,9 @@ impl ImagePlan {
         let parts: Vec<&str> = self.name.split('/').collect();
 
         if parts.len() > 2 {
-            parts[0].to_string()
+            format!("https://{}", parts[0].to_string())
         } else {
-            "registry.docker.io".to_string()
+            "https://registry.docker.io".to_string()
         }
     }
 
