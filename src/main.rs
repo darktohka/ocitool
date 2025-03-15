@@ -1,5 +1,7 @@
 use downloader::OciDownloaderError;
+use parser::ParsedImage;
 use platform::PlatformMatcher;
+use runner::OciRunner;
 use spec::plan::ImagePlan;
 use std::env;
 use std::fs::File;
@@ -12,10 +14,13 @@ mod digest;
 mod downloader;
 mod execution;
 mod macros;
+mod parser;
 mod platform;
+mod runner;
 mod spec;
 mod uploader;
 mod walk;
+mod whiteout;
 
 xflags::xflags! {
     /// Uploads an OCI image to a registry
@@ -46,12 +51,23 @@ xflags::xflags! {
 
         cmd run {
             /// Sets the image name to run
-            required --image image: String
-            repeated --volume volumes: String
-            optional --entrypoint entrypoint: String
+            required -i,--image image: String
+
+            /// Volumes to mount in the container
+            repeated -v,--volume volumes: String
+
+            /// Optional entrypoint to use
+            optional -e,--entrypoint entrypoint: String
+
+            /// Optional command to run
+            optional -c,--cmd cmd: String
+
+            /// Optional working directory
+            optional -w,--workdir workdir: String
 
             /// Disables the on-disk cache
             optional --no-cache
+            optional --no-mount-system
         }
 }
 }
@@ -119,49 +135,28 @@ async fn run_command(
     password: Option<String>,
 ) {
     let image_name = args.image.clone();
-    // let volumes = args.volume.clone();
+    let volumes = args.volume.clone();
+    let entrypoint = args.entrypoint.clone();
+    let cmd = args.cmd.clone();
+    let workdir = args.workdir.clone();
 
-    let split = image_name.split('/');
-    let parts: Vec<&str> = split.collect();
-
-    let registry = if parts.len() == 3 {
-        format!("https://{}", parts[0])
-    } else {
-        "https://registry-1.docker.io".to_string()
-    };
-
-    let actual_image_name_with_tag = if parts.len() == 3 {
-        parts[1..].join("/")
-    } else {
-        image_name.clone()
-    };
-
-    let actual_image_name = actual_image_name_with_tag.split(':').nth(0).unwrap();
-    let tag = actual_image_name_with_tag
-        .split(':')
-        .nth(1)
-        .unwrap_or("latest");
-    let fixed_image_name = if image_name.contains('/') {
-        actual_image_name.to_string()
-    } else {
-        format!("library/{}", actual_image_name)
-    };
-
+    let image = ParsedImage::from_image_name(&image_name);
     let service = if let Some(arg_service) = service {
         arg_service
-    } else if parts.len() > 2 {
-        parts[0].to_string()
     } else {
-        "registry.docker.io".to_string()
+        image.service.clone()
     };
 
     let client = Arc::new(Mutex::new(client::OciClient::new(
-        registry, username, password, service,
+        image.registry,
+        username,
+        password,
+        service,
     )));
     let downloader = downloader::OciDownloader::new(client, args.no_cache);
 
     let index = downloader
-        .download_index(&fixed_image_name, tag)
+        .download_index(&image.library_name, &image.tag)
         .await
         .unwrap();
 
@@ -171,28 +166,42 @@ async fn run_command(
         .ok_or(OciDownloaderError("No matching platform found".to_string()))
         .unwrap();
 
-    let downloaded_manifest = downloader
-        .download_manifest(&fixed_image_name, &manifest.digest)
+    let downloaded_manifest: spec::manifest::ImageManifest = downloader
+        .download_manifest(&image.library_name, &manifest.digest)
         .await
         .unwrap();
-
-    println!("Manifest: {:?}", downloaded_manifest);
 
     let downloaded_config = downloader
-        .download_config(&fixed_image_name, &downloaded_manifest.config.digest)
+        .download_config(&image.library_name, &downloaded_manifest.config.digest)
         .await
         .unwrap();
 
-    println!("Config: {:?}", downloaded_config);
+    let tmpdir = tempfile::tempdir().unwrap();
+    let tmpdir_path = tmpdir.path();
 
     for layer in downloaded_manifest.layers {
         downloader
-            .extract_layer(&fixed_image_name, &layer.digest, &layer.media_type)
+            .extract_layer(
+                &image.library_name,
+                &layer.digest,
+                &layer.media_type,
+                &tmpdir_path.to_path_buf(),
+            )
             .await
             .expect("Failed to extract layer");
-
-        println!("Extracted layer {}", layer.digest);
     }
+
+    let runner = OciRunner::new(
+        tmpdir_path,
+        &downloaded_config.config,
+        volumes,
+        entrypoint,
+        cmd,
+        workdir,
+        !args.no_mount_system,
+    );
+
+    runner.run().await.expect("Failed to run command");
 }
 
 #[tokio::main]

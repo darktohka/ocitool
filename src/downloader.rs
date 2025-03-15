@@ -5,6 +5,7 @@ use crate::{
     client::{ImagePermissions, OciClient, OciClientError},
     macros::{impl_error, impl_from_error},
     spec::{config::ImageConfig, enums::MediaType, index::ImageIndex, manifest::ImageManifest},
+    whiteout::extract_tar,
 };
 use std::{io::Read, path::PathBuf, sync::Arc};
 
@@ -17,7 +18,6 @@ impl_from_error!(std::io::Error, OciDownloaderError);
 pub struct OciDownloader {
     client: Arc<Mutex<OciClient>>,
     blob_dir: PathBuf,
-    layer_dir: PathBuf,
     no_cache: bool,
 }
 
@@ -28,12 +28,10 @@ impl OciDownloader {
             None => PathBuf::from("/tmp/ocitool"),
         };
         let blob_dir = cache_dir.join("blobs");
-        let layer_dir = cache_dir.join("layers");
 
         OciDownloader {
             client,
             blob_dir,
-            layer_dir,
             no_cache,
         }
     }
@@ -45,6 +43,7 @@ impl OciDownloader {
     ) -> Result<ImageIndex, OciDownloaderError> {
         let mut client = self.client.lock().await;
         let url = format!("{}/manifests/{}", client.get_image_url(image_name), tag);
+
         println!("Downloading {}:{}...", image_name, tag);
 
         let response = client
@@ -109,6 +108,7 @@ impl OciDownloader {
 
         let mut client = self.client.lock().await;
         let url = format!("{}/manifests/{}", client.get_image_url(image_name), digest);
+
         println!("Downloading manifest {}:{}...", image_name, digest);
 
         let response = client
@@ -151,6 +151,7 @@ impl OciDownloader {
 
         let mut client = self.client.lock().await;
         let url = format!("{}/blobs/{}", client.get_image_url(image_name), digest);
+
         println!("Downloading config {}:{}...", image_name, digest);
 
         let response = client
@@ -187,20 +188,17 @@ impl OciDownloader {
     ) -> Result<(), OciDownloaderError> {
         match media_type {
             MediaType::OciImageLayerV1Tar => {
-                let mut tar = tar::Archive::new(bytes);
-                tar.unpack(dest_dir)?;
+                extract_tar(bytes, dest_dir).await?;
                 Ok(())
             }
             MediaType::OciImageLayerV1TarGzip => {
                 let decoder = GzDecoder::new(bytes);
-                let mut tar = tar::Archive::new(decoder);
-                tar.unpack(dest_dir)?;
+                extract_tar(decoder, dest_dir).await?;
                 Ok(())
             }
             MediaType::OciImageLayerV1TarZstd => {
                 let decoder = zstd::stream::Decoder::new(bytes)?;
-                let mut tar = tar::Archive::new(decoder);
-                tar.unpack(dest_dir)?;
+                extract_tar(decoder, dest_dir).await?;
                 Ok(())
             }
             _ => {
@@ -212,22 +210,13 @@ impl OciDownloader {
         }
     }
 
-    pub fn get_layer_dir(&self, digest: &str) -> PathBuf {
-        self.layer_dir.join(digest.replace(":", "-"))
-    }
-
     pub async fn extract_layer(
         &self,
         image_name: &str,
         digest: &str,
         media_type: &MediaType,
+        dest_dir: &PathBuf,
     ) -> Result<(), OciDownloaderError> {
-        let dest_dir = self.get_layer_dir(digest);
-
-        if dest_dir.is_dir() {
-            return Ok(());
-        }
-
         if let Some(blob) = self.load_blob_cache(digest).await {
             self.extract_layer_bytes_to(&blob[..], media_type, &dest_dir)
                 .await?;
