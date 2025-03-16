@@ -151,6 +151,13 @@ impl PlanExecution {
 
     pub async fn execute(&mut self) -> Result<(), OciUploaderError> {
         let mut manifests: Vec<Manifest> = vec![];
+        let full_image_name = self.plan.name.clone();
+        let parts = full_image_name.split('/').collect::<Vec<&str>>();
+        let image_name: String = if parts.len() == 3 {
+            parts[1..].join("/")
+        } else {
+            full_image_name.to_owned()
+        };
 
         for platform in &self.plan.platforms {
             let mut layers: Vec<Layer> = vec![];
@@ -244,7 +251,7 @@ impl PlanExecution {
                     let (blob, new_layer) = self
                         .compress_and_upload_tar(&tar_buffer, &layer_comment, compress)
                         .await;
-                    self.uploader.upload_blob(&self.plan.name, &blob).await?;
+                    self.uploader.upload_blob(&image_name, &blob).await?;
                     layers.push(new_layer);
                 }
             }
@@ -275,9 +282,7 @@ impl PlanExecution {
                 data: config_data,
             };
 
-            self.uploader
-                .upload_blob(&self.plan.name, &config_blob)
-                .await?;
+            self.uploader.upload_blob(&image_name, &config_blob).await?;
 
             let manifest = ImageManifest {
                 schema_version: 2,
@@ -318,7 +323,7 @@ impl PlanExecution {
             for tag in &self.plan.tags {
                 self.uploader
                     .upload_manifest(
-                        &self.plan.name,
+                        &image_name,
                         manifest_data.clone(),
                         "application/vnd.oci.image.manifest.v1+json",
                         tag,
@@ -339,7 +344,7 @@ impl PlanExecution {
         for tag in &self.plan.tags {
             self.uploader
                 .upload_manifest(
-                    &self.plan.name,
+                    &image_name,
                     index_data.clone(),
                     "application/vnd.oci.image.index.v1+json",
                     tag,

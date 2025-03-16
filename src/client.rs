@@ -198,27 +198,17 @@ impl OciClient {
         image_name: &str,
         image_permissions: ImagePermissions,
     ) -> Result<HeaderMap, OciClientError> {
-        let parts = image_name.split('/').collect::<Vec<&str>>();
-        let only_image_name = if parts.len() == 3 {
-            parts[1..].join("/")
-        } else {
-            image_name.to_owned()
-        };
-        let actual_bearer = match self.image_bearer_map.get(&only_image_name) {
+        let actual_bearer = match self.image_bearer_map.get(image_name) {
             Some(bearer) => {
                 if bearer.permissions == ImagePermissions::Pull
                     && image_permissions == ImagePermissions::Push
                 {
-                    self.login_to_registry(&only_image_name, image_permissions)
-                        .await
+                    self.login_to_registry(image_name, image_permissions).await
                 } else {
                     Ok(bearer.token.clone())
                 }
             }
-            None => {
-                self.login_to_registry(&only_image_name, image_permissions)
-                    .await
-            }
+            None => self.login_to_registry(image_name, image_permissions).await,
         };
 
         match actual_bearer {
