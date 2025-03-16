@@ -83,7 +83,9 @@ impl<'a> OciRunner<'a> {
         }
 
         if let Some(cmd) = &self.cmd {
-            command.arg(cmd);
+            for arg in cmd.split_whitespace() {
+                command.arg(arg);
+            }
         } else if let Some(config) = &self.config {
             if let Some(cmd) = &config.cmd {
                 for arg in cmd {

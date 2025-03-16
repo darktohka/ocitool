@@ -45,6 +45,11 @@ pub struct Layer {
     pub comment: String,
 }
 
+pub struct Digest {
+    pub compressed_digest: String,
+    pub uncompressed_digest: String,
+}
+
 impl Layer {
     pub fn to_descriptor(&self) -> Descriptor {
         Descriptor {
@@ -81,25 +86,8 @@ impl PlanExecution {
         }
     }
 
-    async fn compress_and_upload_tar(
-        &self,
-        tar_buffer: &Vec<u8>,
-        comment: &str,
-        compress: bool,
-    ) -> (Blob, Layer) {
+    async fn compress_tar(&self, tar_buffer: &Vec<u8>) -> (Vec<u8>, Digest) {
         let uncompressed_digest = sha256_digest(&tar_buffer);
-
-        if !compress {
-            return self
-                .upload_tar(
-                    tar_buffer.clone(),
-                    uncompressed_digest.clone(),
-                    uncompressed_digest,
-                    comment,
-                )
-                .await;
-        }
-
         let mut encoder = Encoder::new(Vec::new(), self.compression_level).unwrap();
 
         // Enable multithreading
@@ -117,31 +105,24 @@ impl PlanExecution {
             (compressed_data.len() as f64 / tar_buffer.len() as f64) * 100.0
         );
 
-        return self
-            .upload_tar(
-                compressed_data,
-                uncompressed_digest,
+        return (
+            compressed_data,
+            Digest {
                 compressed_digest,
-                comment,
-            )
-            .await;
+                uncompressed_digest,
+            },
+        );
     }
 
-    async fn upload_tar(
-        &self,
-        compressed_data: Vec<u8>,
-        uncompressed_digest: String,
-        compressed_digest: String,
-        comment: &str,
-    ) -> (Blob, Layer) {
+    fn build_layer(&self, data: Vec<u8>, digest: Digest, comment: &str) -> (Blob, Layer) {
         let blob = Blob {
-            digest: compressed_digest.clone(),
-            data: compressed_data,
+            digest: digest.compressed_digest.clone(),
+            data,
         };
 
         let layer = Layer {
-            uncompressed_digest,
-            digest: compressed_digest,
+            uncompressed_digest: digest.uncompressed_digest,
+            digest: digest.compressed_digest,
             size: blob.data.len() as u64,
             comment: comment.to_string(),
         };
@@ -203,9 +184,21 @@ impl PlanExecution {
                             tar_builder.finish().unwrap();
                         }
 
-                        vec![(tar_buffer, true)]
+                        let (compressed_tar_buffer, digest) = self.compress_tar(&tar_buffer).await;
+
+                        vec![(compressed_tar_buffer, digest)]
                     }
-                    ImagePlanLayerType::Layer => vec![(fs::read(&layer.source).unwrap(), true)],
+                    ImagePlanLayerType::Layer => {
+                        let layer_data = fs::read(&layer.source).unwrap();
+                        let digest = sha256_digest(&layer_data);
+                        vec![(
+                            layer_data,
+                            Digest {
+                                compressed_digest: digest.clone(),
+                                uncompressed_digest: digest,
+                            },
+                        )]
+                    }
                     ImagePlanLayerType::Image => {
                         let image_name = layer.source.clone();
                         let image = ParsedImage::from_image_name(&image_name);
@@ -230,27 +223,41 @@ impl PlanExecution {
                             .await
                             .unwrap();
 
-                        let mut tar_layers: Vec<(Vec<u8>, bool)> = vec![];
+                        let downloaded_config: ImageConfig = self
+                            .downloader
+                            .download_config(
+                                &image.library_name,
+                                &downloaded_manifest.config.digest,
+                            )
+                            .await
+                            .unwrap();
 
-                        for layer in downloaded_manifest.layers {
+                        let mut tar_layers: Vec<(Vec<u8>, Digest)> = vec![];
+
+                        for (index, layer) in downloaded_manifest.layers.iter().enumerate() {
                             let layer_data = self
                                 .downloader
                                 .download_layer(&image.library_name, &layer.digest)
                                 .await
                                 .unwrap();
 
-                            tar_layers.push((layer_data, false));
+                            tar_layers.push((
+                                layer_data,
+                                Digest {
+                                    compressed_digest: layer.digest.clone(),
+                                    uncompressed_digest: downloaded_config.rootfs.diff_ids[index]
+                                        .clone(),
+                                },
+                            ));
                         }
 
                         tar_layers
                     }
                 };
 
-                for (tar_buffer, compress) in tar_buffers {
+                for (tar_buffer, digest) in tar_buffers {
                     let layer_comment = layer.comment.clone();
-                    let (blob, new_layer) = self
-                        .compress_and_upload_tar(&tar_buffer, &layer_comment, compress)
-                        .await;
+                    let (blob, new_layer) = self.build_layer(tar_buffer, digest, &layer_comment);
                     self.uploader.upload_blob(&image_name, &blob).await?;
                     layers.push(new_layer);
                 }
