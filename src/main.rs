@@ -70,6 +70,9 @@ xflags::xflags! {
 
             /// Disables mounting the system directories (/proc, /sys, /dev)
             optional --no-mount-system
+
+            /// Disables ensuring the DNS configuration
+            optional --no-ensure-dns
         }
 }
 }
@@ -203,6 +206,7 @@ async fn run_command(
         cmd,
         workdir,
         !args.no_mount_system,
+        !args.no_ensure_dns,
     );
 
     runner.run().await.expect("Failed to run command");

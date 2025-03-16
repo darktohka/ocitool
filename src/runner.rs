@@ -1,4 +1,8 @@
-use std::path::Path;
+use std::{
+    fs::{create_dir_all, File},
+    io::Write,
+    path::Path,
+};
 
 use crate::{
     macros::{impl_error, impl_from_error},
@@ -16,6 +20,7 @@ pub struct OciRunner<'a> {
     cmd: Option<String>,
     workdir: Option<String>,
     mount_system: bool,
+    ensure_dns: bool,
 }
 
 impl<'a> OciRunner<'a> {
@@ -27,6 +32,7 @@ impl<'a> OciRunner<'a> {
         cmd: Option<String>,
         workdir: Option<String>,
         mount_system: bool,
+        ensure_dns: bool,
     ) -> Self {
         OciRunner {
             dir,
@@ -36,10 +42,21 @@ impl<'a> OciRunner<'a> {
             cmd,
             workdir,
             mount_system,
+            ensure_dns,
         }
     }
 
     pub async fn run(&self) -> Result<(), OciRunnerError> {
+        if self.ensure_dns {
+            let etc = self.dir.join("etc");
+            create_dir_all(etc.clone())?;
+
+            let resolv_conf = etc.join("resolv.conf");
+            let mut resolv_conf_file = File::create(resolv_conf)?;
+
+            resolv_conf_file.write_all(b"nameserver 8.8.8.8\nnameserver 8.8.4.4\n")?;
+        }
+
         let proot = which::which("proot")
             .or_else(|_| Err(OciRunnerError("proot not found in PATH".to_string())))?;
 
