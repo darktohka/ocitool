@@ -107,15 +107,12 @@ impl OciClient {
         image_name: &str,
         image_permissions: ImagePermissions,
     ) -> Result<String, OciClientError> {
-        let scope = format!(
-            "repository:{}:{}",
-            image_name,
-            if image_permissions == ImagePermissions::Pull {
-                "pull"
-            } else {
-                "pull,push"
-            }
-        );
+        let permissions = if image_permissions == ImagePermissions::Pull {
+            "pull"
+        } else {
+            "pull,push"
+        };
+        let scope = format!("repository:{}:{}", image_name, permissions,);
         let url = format!(
             "{}?service={}&scope={}",
             self.get_auth_url(),
@@ -127,7 +124,7 @@ impl OciClient {
 
         if let (Some(username), Some(password)) = (&self.username, &self.password) {
             request = request.basic_auth(username, Some(password));
-            println!("Logging in as {}...", username);
+            println!("Logging in as {} for {}...", username, scope);
         } else {
             println!("Logging in anonymously...");
         }

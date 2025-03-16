@@ -81,8 +81,24 @@ impl PlanExecution {
         }
     }
 
-    async fn upload_tar(&self, tar_buffer: &Vec<u8>, comment: &str) -> (Blob, Layer) {
+    async fn compress_and_upload_tar(
+        &self,
+        tar_buffer: &Vec<u8>,
+        comment: &str,
+        compress: bool,
+    ) -> (Blob, Layer) {
         let uncompressed_digest = sha256_digest(&tar_buffer);
+
+        if !compress {
+            return self
+                .upload_tar(
+                    tar_buffer.clone(),
+                    uncompressed_digest.clone(),
+                    uncompressed_digest,
+                    comment,
+                )
+                .await;
+        }
 
         let mut encoder = Encoder::new(Vec::new(), self.compression_level).unwrap();
 
@@ -91,24 +107,41 @@ impl PlanExecution {
 
         encoder.write_all(&tar_buffer).unwrap();
         let compressed_data = encoder.finish().unwrap();
-        let digest = sha256_digest(&compressed_data);
+        let compressed_digest = sha256_digest(&compressed_data);
 
         println!(
             "Compressing layer: {}, original size: {}, compressed size: {} ({:.2}% of original size)",
-            digest,
+            compressed_digest,
             tar_buffer.len(),
             compressed_data.len(),
             (compressed_data.len() as f64 / tar_buffer.len() as f64) * 100.0
         );
 
+        return self
+            .upload_tar(
+                compressed_data,
+                uncompressed_digest,
+                compressed_digest,
+                comment,
+            )
+            .await;
+    }
+
+    async fn upload_tar(
+        &self,
+        compressed_data: Vec<u8>,
+        uncompressed_digest: String,
+        compressed_digest: String,
+        comment: &str,
+    ) -> (Blob, Layer) {
         let blob = Blob {
-            digest: digest.clone(),
+            digest: compressed_digest.clone(),
             data: compressed_data,
         };
 
         let layer = Layer {
             uncompressed_digest,
-            digest: digest.clone(),
+            digest: compressed_digest,
             size: blob.data.len() as u64,
             comment: comment.to_string(),
         };
@@ -163,9 +196,9 @@ impl PlanExecution {
                             tar_builder.finish().unwrap();
                         }
 
-                        vec![tar_buffer]
+                        vec![(tar_buffer, true)]
                     }
-                    ImagePlanLayerType::Layer => vec![fs::read(&layer.source).unwrap()],
+                    ImagePlanLayerType::Layer => vec![(fs::read(&layer.source).unwrap(), true)],
                     ImagePlanLayerType::Image => {
                         let image_name = layer.source.clone();
                         let image = ParsedImage::from_image_name(&image_name);
@@ -190,7 +223,7 @@ impl PlanExecution {
                             .await
                             .unwrap();
 
-                        let mut tar_layers: Vec<Vec<u8>> = vec![];
+                        let mut tar_layers: Vec<(Vec<u8>, bool)> = vec![];
 
                         for layer in downloaded_manifest.layers {
                             let layer_data = self
@@ -199,16 +232,18 @@ impl PlanExecution {
                                 .await
                                 .unwrap();
 
-                            tar_layers.push(layer_data);
+                            tar_layers.push((layer_data, false));
                         }
 
                         tar_layers
                     }
                 };
 
-                for tar_buffer in tar_buffers {
+                for (tar_buffer, compress) in tar_buffers {
                     let layer_comment = layer.comment.clone();
-                    let (blob, new_layer) = self.upload_tar(&tar_buffer, &layer_comment).await;
+                    let (blob, new_layer) = self
+                        .compress_and_upload_tar(&tar_buffer, &layer_comment, compress)
+                        .await;
                     self.uploader.upload_blob(&self.plan.name, &blob).await?;
                     layers.push(new_layer);
                 }
