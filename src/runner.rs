@@ -1,7 +1,8 @@
-use std::{
+use std::path::Path;
+
+use tokio::{
     fs::{create_dir_all, File},
-    io::Write,
-    path::Path,
+    io::AsyncWriteExt,
 };
 
 use crate::{
@@ -49,12 +50,14 @@ impl<'a> OciRunner<'a> {
     pub async fn run(&self) -> Result<(), OciRunnerError> {
         if self.ensure_dns {
             let etc = self.dir.join("etc");
-            create_dir_all(etc.clone())?;
+            create_dir_all(etc.clone()).await?;
 
             let resolv_conf = etc.join("resolv.conf");
-            let mut resolv_conf_file = File::create(resolv_conf)?;
+            let mut resolv_conf_file = File::create(resolv_conf).await?;
 
-            resolv_conf_file.write_all(b"nameserver 8.8.8.8\nnameserver 8.8.4.4\n")?;
+            resolv_conf_file
+                .write_all(b"nameserver 8.8.8.8\nnameserver 8.8.4.4\n")
+                .await?;
         }
 
         let proot = which::which("proot")
