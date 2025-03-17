@@ -29,11 +29,4 @@ inherits = "release"
 lto = true
 strip = true
 panic = "abort"
-
-
-[profile.release-strip]
-inherits = "release"
-lto = false
-strip = true
-panic = "abort"
-
+codegen-units = 1
