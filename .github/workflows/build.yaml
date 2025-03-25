@@ -24,6 +24,10 @@ jobs:
         with:
           name: binary-x86_64
           path: target/x86_64-unknown-linux-gnu/release-lto/ocitool
+      - name: Upload to S3
+        run: |
+          mv target/x86_64-unknown-linux-gnu/release-lto/ocitool ocitool-x86_64
+          s3cmd put ocitool-x86_64 s3://${{ secrets.AWS_BUCKET }}/ --access_key ${{ secrets.AWS_ACCESS_KEY_ID }} --secret_key ${{ secrets.AWS_SECRET_ACCESS_KEY }} --region ${{ secrets.AWS_REGION }} --host ${{ secrets.AWS_ENDPOINT }} --host-bucket ${{ secrets.AWS_ENDPOINT }}
 
   build-arm64:
     runs-on: ubuntu-latest
@@ -41,6 +45,10 @@ jobs:
         with:
           name: binary-aarch64
           path: target/aarch64-unknown-linux-gnu/release-lto/ocitool
+      - name: Upload to S3
+        run: |
+          mv target/aarch64-unknown-linux-gnu/release-lto/ocitool ocitool-aarch64
+          s3cmd put ocitool-aarch64 s3://${{ secrets.AWS_BUCKET }}/ --access_key ${{ secrets.AWS_ACCESS_KEY_ID }} --secret_key ${{ secrets.AWS_SECRET_ACCESS_KEY }} --region ${{ secrets.AWS_REGION }} --host ${{ secrets.AWS_ENDPOINT }} --host-bucket ${{ secrets.AWS_ENDPOINT }}
 
   build-armv7:
     runs-on: ubuntu-latest
@@ -58,6 +66,10 @@ jobs:
         with:
           name: binary-armv7
           path: target/armv7-unknown-linux-gnueabihf/release-lto/ocitool
+      - name: Upload to S3
+        run: |
+          mv target/armv7-unknown-linux-gnu/release-lto/ocitool ocitool-armv7l
+          s3cmd put ocitool-armv7l s3://${{ secrets.AWS_BUCKET }}/ --access_key ${{ secrets.AWS_ACCESS_KEY_ID }} --secret_key ${{ secrets.AWS_SECRET_ACCESS_KEY }} --region ${{ secrets.AWS_REGION }} --host ${{ secrets.AWS_ENDPOINT }} --host-bucket ${{ secrets.AWS_ENDPOINT }}
 
   build-image:
     runs-on: ubuntu-latest
