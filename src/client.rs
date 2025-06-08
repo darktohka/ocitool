@@ -129,43 +129,56 @@ impl OciClient {
             println!("Logging in anonymously...");
         }
 
-        let response = request.send().await;
+        let response = match request.send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                return Err(OciClientError(format!(
+                    "Failed to send login request: {}",
+                    e
+                )));
+            }
+        };
 
-        match response {
-            Ok(response) => match response.status() {
-                StatusCode::OK => match response.text().await {
-                    Ok(response_text) => {
-                        match serde_json::from_str::<serde_json::Value>(&response_text) {
-                            Ok(json) => ["access_token", "token"]
-                                .iter()
-                                .find_map(|key| json.get(key).and_then(|v| v.as_str()))
-                                .map_or_else(
-                                    || {
-                                        Err(OciClientError(format!(
-                                            "Could not get token from JSON response: {}",
-                                            response_text
-                                        )))
-                                    },
-                                    |token| Ok(self.get_bearer(token)),
-                                ),
-                            _ => Ok(self.get_bearer(&response_text)),
-                        }
-                    }
-                    Err(e) => Err(OciClientError(format!(
-                        "Failed to get text response: {}",
-                        e
-                    ))),
-                },
-                code => Err(OciClientError(format!(
+        match response.status() {
+            StatusCode::OK => {
+                // Status code 200 OK means we got a token,
+            }
+            code => {
+                return Err(OciClientError(format!(
                     "Login status code not OK: {}",
                     code
-                ))),
-            },
-            Err(e) => Err(OciClientError(format!(
-                "Failed to send login request: {}",
-                e
-            ))),
+                )));
+            }
         }
+
+        let response_text = match response.text().await {
+            Ok(text) => text,
+
+            Err(e) => {
+                return Err(OciClientError(format!(
+                    "Failed to get text response: {}",
+                    e
+                )));
+            }
+        };
+
+        let token = match serde_json::from_str::<serde_json::Value>(&response_text) {
+            Ok(json) => ["access_token", "token"]
+                .iter()
+                .find_map(|key| json.get(key).and_then(|v| v.as_str()))
+                .map_or_else(
+                    || {
+                        Err(OciClientError(format!(
+                            "Could not get token from JSON response: {}",
+                            response_text
+                        )))
+                    },
+                    |token| Ok(self.get_bearer(token)),
+                ),
+            _ => Ok(self.get_bearer(&response_text)),
+        };
+
+        return token;
     }
 
     pub async fn login_to_registry(
@@ -211,14 +224,12 @@ impl OciClient {
             None => self.login_to_registry(image_name, image_permissions).await,
         };
 
-        match actual_bearer {
-            Ok(bearer) => {
-                let mut headers = HeaderMap::with_capacity(1);
-                headers.insert(AUTHORIZATION, HeaderValue::from_str(&bearer).unwrap());
+        let mut headers = HeaderMap::with_capacity(1);
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&actual_bearer?).unwrap(),
+        );
 
-                Ok(headers)
-            }
-            Err(e) => Err(e),
-        }
+        Ok(headers)
     }
 }
