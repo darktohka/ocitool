@@ -1,3 +1,4 @@
+use crate::cleanup::cleanup_command;
 use downloader::OciDownloaderError;
 use parser::ParsedImage;
 use platform::PlatformMatcher;
@@ -5,10 +6,13 @@ use runner::OciRunner;
 use spec::plan::ImagePlan;
 use std::env;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::exit;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use walkdir::WalkDir;
+
+mod cleanup;
 mod client;
 mod digest;
 mod downloader;
@@ -74,6 +78,32 @@ xflags::xflags! {
             /// Disables ensuring the DNS configuration
             optional --no-ensure-dns
         }
+
+        /// Cleans up dangling data in a Docker registry server
+        /// Removes dangling commit hashes, indexes, layers, and blobs
+        cmd cleanup {
+            /// The directory that contains the Docker registry data
+            /// that is to be cleaned up
+            required -d,--dir dir: PathBuf
+
+            /// Remove dangling commit hashes
+            optional --commits
+
+            /// Remove dangling indexes
+            optional --indexes
+
+            /// Remove dangling layers
+            optional --layers
+
+            /// Remove dangling blobs
+            optional --blobs
+
+            /// Cleanup everything
+            optional -a,--all
+
+            /// Agree to the cleanup without prompting
+            optional -y,--yes
+        }
 }
 }
 
@@ -130,7 +160,7 @@ async fn upload_command(
 
     if let Err(e) = execution.execute().await {
         eprintln!("Error: {}", e);
-        std::process::exit(1);
+        exit(1);
     }
 }
 
@@ -234,5 +264,11 @@ async fn main() {
             upload_command(&upload, args.no_cache, service, username, password).await
         }
         OcitoolCmd::Run(run) => run_command(&run, args.no_cache, service, username, password).await,
+        OcitoolCmd::Cleanup(cleanup) => {
+            if let Err(e) = cleanup_command(cleanup) {
+                eprintln!("Cleanup error: {}", e);
+                exit(1);
+            }
+        }
     }
 }

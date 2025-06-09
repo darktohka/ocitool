@@ -22,6 +22,7 @@ flate2 = { version = "1", features = ["zlib-rs"], default-features = false }
 tempfile = "3"
 dirs = "6"
 which = "8"
+humansize = "2"
 
 [profile.release-lto]
 inherits = "release"
