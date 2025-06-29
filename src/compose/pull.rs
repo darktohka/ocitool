@@ -12,8 +12,20 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::Request;
 
+#[derive(Debug, Clone)]
+pub struct DownloadableIndex {
+    pub full_image: FullImageWithTag,
+}
+
+#[derive(Debug, Clone)]
+pub enum Downloadable {
+    Index(DownloadableIndex),
+    Image(FullImageWithTag),
+}
+
 pub struct PullInstance {
     pub existing_digests: Arc<Mutex<HashSet<String>>>,
+    pub download_queue: Arc<Mutex<Vec<Downloadable>>>,
 }
 
 pub async fn pull_command(
@@ -94,13 +106,26 @@ pub async fn pull_command(
         }
     }
 
+    let mut download_queue = Vec::<Downloadable>::new();
+
+    for image in full_images {
+        download_queue.push(Downloadable::Index(DownloadableIndex {
+            full_image: image.clone(),
+        }));
+    }
+
     let pull_instance = PullInstance {
         existing_digests: Arc::new(Mutex::new(existing_digests)),
+        download_queue: Arc::new(Mutex::new(download_queue)),
     };
 
     println!(
         "Existing content digests: {:?}",
         pull_instance.existing_digests.lock().await
+    );
+    println!(
+        "Download queue: {:?}",
+        pull_instance.download_queue.lock().await
     );
 
     client.login(&image_permissions).await?;
