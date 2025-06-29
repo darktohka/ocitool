@@ -51,7 +51,7 @@ impl OciDownloader {
         image: FullImageWithTag,
     ) -> Result<(ImageIndex, String), OciDownloaderError> {
         let url = format!("{}/manifests/{}", image.image.get_image_url(), image.tag);
-        println!("Downloading {}:{}...", image.image.image_name, image.tag);
+        // println!("Downloading {}:{}...", image.image.image_name, image.tag);
 
         let response = self
             .client
@@ -119,7 +119,7 @@ impl OciDownloader {
 
         let url = format!("{}/manifests/{}", image.get_image_url(), digest);
 
-        println!("Downloading manifest {}:{}...", image.image_name, digest);
+        // println!("Downloading manifest {}:{}...", image.image_name, digest);
 
         let response = self
             .client
@@ -165,7 +165,7 @@ impl OciDownloader {
 
         let url = format!("{}/blobs/{}", image.get_image_url(), digest);
 
-        println!("Downloading config {}:{}...", image.image_name, digest);
+        // println!("Downloading config {}:{}...", image.image_name, digest);
 
         let response = self
             .client
@@ -242,7 +242,7 @@ impl OciDownloader {
         }
 
         let url = format!("{}/blobs/{}", image.get_image_url(), digest);
-        println!("Downloading layer {}:{}...", image.image_name, digest);
+        // println!("Downloading layer {}:{}...", image.image_name, digest);
 
         let response = self
             .client
@@ -286,7 +286,7 @@ impl OciDownloader {
         }
 
         let url = format!("{}/blobs/{}", image.get_image_url(), digest);
-        println!("Downloading layer {}:{}...", image.image_name, digest);
+        // println!("Downloading layer {}:{}...", image.image_name, digest);
 
         let response = self
             .client
@@ -325,7 +325,7 @@ impl OciDownloader {
         uncompressed_digest: &str,
     ) -> Result<(), OciDownloaderError> {
         let url = format!("{}/blobs/{}", image.get_image_url(), digest);
-        println!("Downloading layer {}:{}...", image.image_name, digest);
+        // println!("Downloading layer {}:{}...", image.image_name, digest);
 
         let response = self
             .client

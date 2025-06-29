@@ -176,13 +176,7 @@ pub async fn create_image_in_containerd(
         ))
         .await
     {
-        Ok(response) => {
-            println!(
-                "Image created successfully: {} with digest {}",
-                full_image.image.library_name, index_digest
-            );
-            Ok(())
-        }
+        Ok(response) => Ok(()),
         Err(status) => {
             if status.code() == Code::AlreadyExists {
                 return match container_client
@@ -213,14 +207,7 @@ pub async fn create_image_in_containerd(
                     ))
                     .await
                 {
-                    Ok(response) => {
-                        println!(
-                            "Image updated successfully: {} with digest {}",
-                            full_image.image.library_name, index_digest
-                        );
-                        println!("Image response: {:?}", response);
-                        Ok(())
-                    }
+                    Ok(response) => Ok(()),
                     Err(status) => {
                         eprintln!("Failed to update image: {}", status);
                         Err(Box::new(status))
@@ -284,10 +271,6 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
             } {
                 match downloadable {
                     Downloadable::Index(index_to_download) => {
-                        println!(
-                            "Thread {} downloading index for {:?}",
-                            i, index_to_download.full_image
-                        );
                         match downloader
                             .download_index(index_to_download.full_image.clone())
                             .await
@@ -295,35 +278,40 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             Ok((image_index, image_json)) => {
                                 let image_json_len = image_json.len();
                                 let image_digest = format!("sha256:{}", digest(&image_json));
-                                println!("Image digest: {}", image_digest);
-                                println!(
-                                    "Thread {} downloaded index for {}",
-                                    i, index_to_download.full_image.image.library_name
-                                );
-                                upload_content_to_containerd(
-                                    container_client.clone(),
-                                    &image_digest,
-                                    image_json.into_bytes(),
-                                    {
-                                        let mut labels = HashMap::new();
-                                        labels.insert(
-                                            "containerd.io/distribution.source.docker.io"
-                                                .to_string(),
-                                            index_to_download.full_image.image.library_name.clone(),
-                                        );
-                                        for (idx, manifest) in
-                                            image_index.manifests.iter().enumerate()
+
+                                if !existing_digests.lock().await.contains(&image_digest) {
+                                    upload_content_to_containerd(
+                                        container_client.clone(),
+                                        &image_digest,
+                                        image_json.into_bytes(),
                                         {
+                                            let mut labels = HashMap::new();
                                             labels.insert(
-                                                format!("containerd.io/gc.ref.content.m.{}", idx),
-                                                manifest.digest.clone(),
+                                                "containerd.io/distribution.source.docker.io"
+                                                    .to_string(),
+                                                index_to_download
+                                                    .full_image
+                                                    .image
+                                                    .library_name
+                                                    .clone(),
                                             );
-                                        }
-                                        labels
-                                    },
-                                )
-                                .await
-                                .expect("Failed to upload index to containerd");
+                                            for (idx, manifest) in
+                                                image_index.manifests.iter().enumerate()
+                                            {
+                                                labels.insert(
+                                                    format!(
+                                                        "containerd.io/gc.ref.content.m.{}",
+                                                        idx
+                                                    ),
+                                                    manifest.digest.clone(),
+                                                );
+                                            }
+                                            labels
+                                        },
+                                    )
+                                    .await
+                                    .expect("Failed to upload index to containerd");
+                                }
 
                                 create_image_in_containerd(
                                     container_client.clone(),
@@ -334,19 +322,9 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 .await
                                 .expect("msg: Failed to create image in containerd");
 
-                                println!(
-                                    "Thread {} downloaded index, found {} manifests.",
-                                    i,
-                                    image_index.manifests.len()
-                                );
                                 let manifest =
                                     platform_matcher.find_manifest(&image_index.manifests);
                                 if let Some(manifest) = manifest {
-                                    println!(
-                                        "Thread {} found manifest for platform: {:?}",
-                                        i, manifest.platform
-                                    );
-
                                     // Check if the manifest digest is already in the download queue
                                     queue_if_not_download(
                                         &manifest.digest,
@@ -364,10 +342,6 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                         }
                     }
                     Downloadable::Manifest(manifest_to_download) => {
-                        println!(
-                            "Thread {} downloading manifest for {:?} with digest {}",
-                            i, manifest_to_download.full_image, manifest_to_download.digest
-                        );
                         match downloader
                             .download_manifest(
                                 manifest_to_download.full_image.image.clone(),
@@ -376,8 +350,6 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             .await
                         {
                             Ok((manifest, manifest_json)) => {
-                                println!("Thread {} downloaded manifest: {:?}", i, manifest_json);
-
                                 // UPLOADING A MANIFEST //
                                 upload_content_to_containerd(
                                     container_client.clone(),
@@ -427,10 +399,6 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                         }
                     }
                     Downloadable::Config(config_to_download) => {
-                        println!(
-                            "Thread {} downloading config for {:?} with digest {}",
-                            i, config_to_download.full_image, config_to_download.digest
-                        );
                         match downloader
                             .download_config(
                                 config_to_download.full_image.image.clone(),
@@ -439,8 +407,6 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             .await
                         {
                             Ok((config, config_bytes)) => {
-                                println!("Thread {} downloaded config: {:?}", i, config_bytes);
-
                                 // UPLOADING A CONFIG //
                                 upload_content_to_containerd(
                                     container_client.clone(),
@@ -489,11 +455,6 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                         }
                     }
                     Downloadable::Layer(layer_to_download) => {
-                        println!(
-                            "Thread {} downloading layer for {:?} with digest {}, uncompressed digest {}",
-                            i, layer_to_download.full_image, layer_to_download.digest, layer_to_download.uncompressed_digest
-                        );
-
                         match downloader
                             .download_layer_to_containerd(
                                 container_client.clone(),
@@ -503,12 +464,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             )
                             .await
                         {
-                            Ok(()) => {
-                                println!(
-                                    "Thread {} downloaded layer: {}",
-                                    i, layer_to_download.digest
-                                );
-                            }
+                            Ok(()) => {}
                             Err(e) => {
                                 eprintln!(
                                     "\x1b[31mThread {} failed to download layer: {}\x1b[0m",
