@@ -1,12 +1,13 @@
 use crate::compose::containerd::client::services::v1::{
-    container, CreateImageRequest, Image, ListContentRequest, ListImagesRequest, WriteAction,
-    WriteContentRequest,
+    CreateImageRequest, Image, ListContentRequest, ListImagesRequest, UpdateImageRequest,
+    WriteAction, WriteContentRequest,
 };
 use crate::compose::containerd::client::types;
-use crate::digest::sha256_digest;
+use crate::compose::lease::LeasedClient;
 use crate::downloader::OciDownloader;
 use crate::platform::PlatformMatcher;
-use crate::spec::manifest::{Descriptor, ImageManifest};
+use crate::spec::manifest::Descriptor;
+use crate::with_client;
 use crate::{
     client::{ImagePermission, ImagePermissions, OciClient},
     compose::{containerd::client::Client, docker_compose_finder::find_and_parse_docker_composes},
@@ -14,14 +15,11 @@ use crate::{
     system_login::get_system_login,
     Compose, Pull,
 };
-use crate::{digest, with_namespace};
-use prost::Message;
 use prost_types::Timestamp;
+use sha256::digest;
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tonic::Status;
 use tonic::{Code, Request};
 
 #[derive(Debug, Clone)]
@@ -58,16 +56,21 @@ pub enum Downloadable {
 }
 
 pub struct PullInstance {
-    pub container_client: Arc<Client>,
+    pub container_client: Arc<LeasedClient>,
     pub existing_digests: Arc<Mutex<HashSet<String>>>,
     pub download_queue: Arc<Mutex<Vec<Downloadable>>>,
 }
 
 pub async fn get_existing_digests_from_containerd(
-    container_client: &Client,
+    container_client: Arc<LeasedClient>,
 ) -> Result<HashSet<String>, Box<dyn std::error::Error>> {
-    let list_content_request = with_namespace!(ListContentRequest { filters: vec![] }, "default");
-    let content = container_client.content().list(list_content_request).await;
+    let list_content_request =
+        with_client!(ListContentRequest { filters: vec![] }, container_client);
+    let content = container_client
+        .client()
+        .content()
+        .list(list_content_request)
+        .await;
 
     let mut stream = match content {
         Ok(response) => response.into_inner(),
@@ -88,7 +91,7 @@ pub async fn get_existing_digests_from_containerd(
 }
 
 pub async fn upload_content_to_containerd(
-    container_client: &Client,
+    container_client: Arc<LeasedClient>,
     digest: &str,
     data: Vec<u8>,
     labels: HashMap<String, String>,
@@ -103,9 +106,16 @@ pub async fn upload_content_to_containerd(
         labels,
     };
 
-    let request_stream =
-        with_namespace!(futures_util::stream::iter(vec![upload_request]), "default");
-    let content = match container_client.content().write(request_stream).await {
+    let request_stream = with_client!(
+        futures_util::stream::iter(vec![upload_request]),
+        container_client
+    );
+    let content = match container_client
+        .client()
+        .content()
+        .write(request_stream)
+        .await
+    {
         Ok(response) => response,
         Err(status) => {
             if status.code() == Code::AlreadyExists {
@@ -132,6 +142,96 @@ pub async fn upload_content_to_containerd(
     println!("Content upload completed successfully.");
 
     Ok(())
+}
+
+pub async fn create_image_in_containerd(
+    container_client: Arc<LeasedClient>,
+    full_image: &FullImageWithTag,
+    index_digest: String,
+    index_length: i64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match container_client
+        .client()
+        .images()
+        .create(with_client!(
+            CreateImageRequest {
+                image: Some(Image {
+                    name: format!(
+                        "docker.io/{}:{}",
+                        full_image.image.library_name, full_image.tag
+                    ),
+                    labels: HashMap::new(),
+                    target: Some(types::Descriptor {
+                        media_type: "application/vnd.oci.image.index.v1+json".to_string(),
+                        digest: index_digest.clone(),
+                        size: index_length,
+                        annotations: HashMap::new(),
+                    }),
+                    created_at: Some(Timestamp::default()),
+                    updated_at: Some(Timestamp::default())
+                }),
+                source_date_epoch: None,
+            },
+            container_client
+        ))
+        .await
+    {
+        Ok(response) => {
+            println!(
+                "Image created successfully: {} with digest {}",
+                full_image.image.library_name, index_digest
+            );
+            Ok(())
+        }
+        Err(status) => {
+            if status.code() == Code::AlreadyExists {
+                return match container_client
+                    .client()
+                    .images()
+                    .update(with_client!(
+                        UpdateImageRequest {
+                            image: Some(Image {
+                                name: format!(
+                                    "docker.io/{}:{}",
+                                    full_image.image.library_name, full_image.tag
+                                ),
+                                labels: HashMap::new(),
+                                target: Some(types::Descriptor {
+                                    media_type: "application/vnd.oci.image.index.v1+json"
+                                        .to_string(),
+                                    digest: index_digest.clone(),
+                                    size: index_length,
+                                    annotations: HashMap::new(),
+                                }),
+                                created_at: Some(Timestamp::default()),
+                                updated_at: Some(Timestamp::default())
+                            }),
+                            source_date_epoch: None,
+                            update_mask: None,
+                        },
+                        container_client
+                    ))
+                    .await
+                {
+                    Ok(response) => {
+                        println!(
+                            "Image updated successfully: {} with digest {}",
+                            full_image.image.library_name, index_digest
+                        );
+                        println!("Image response: {:?}", response);
+                        Ok(())
+                    }
+                    Err(status) => {
+                        eprintln!("Failed to update image: {}", status);
+                        Err(Box::new(status))
+                    }
+                };
+            }
+
+            eprintln!("Failed to upload content: {}", status);
+            return Err(Box::new(status));
+        }
+    }
 }
 
 pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::error::Error>> {
@@ -194,9 +294,14 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                         {
                             Ok((image_index, image_json)) => {
                                 let image_json_len = image_json.len();
-                                let image_digest = sha256_digest(&image_json.encode_to_vec());
+                                let image_digest = format!("sha256:{}", digest(&image_json));
+                                println!("Image digest: {}", image_digest);
+                                println!(
+                                    "Thread {} downloaded index for {}",
+                                    i, index_to_download.full_image.image.library_name
+                                );
                                 upload_content_to_containerd(
-                                    &container_client,
+                                    container_client.clone(),
                                     &image_digest,
                                     image_json.into_bytes(),
                                     {
@@ -206,40 +311,28 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                                 .to_string(),
                                             index_to_download.full_image.image.library_name.clone(),
                                         );
+                                        for (idx, manifest) in
+                                            image_index.manifests.iter().enumerate()
+                                        {
+                                            labels.insert(
+                                                format!("containerd.io/gc.ref.content.m.{}", idx),
+                                                manifest.digest.clone(),
+                                            );
+                                        }
                                         labels
                                     },
                                 )
                                 .await
                                 .expect("Failed to upload index to containerd");
 
-                                let create_response = container_client
-                                    .images()
-                                    .create(with_namespace!(
-                                        CreateImageRequest {
-                                            image: Some(Image {
-                                                name: format!(
-                                                    "docker.io/{}:{}",
-                                                    index_to_download.full_image.image.library_name,
-                                                    index_to_download.full_image.tag
-                                                ),
-                                                labels: HashMap::new(),
-                                                target: Some(types::Descriptor {
-                                                    media_type:
-                                                        "application/vnd.oci.image.index.v1+json"
-                                                            .to_string(),
-                                                    digest: image_digest,
-                                                    size: image_json_len as i64,
-                                                    annotations: HashMap::new(),
-                                                }),
-                                                created_at: Some(Timestamp::default()),
-                                                updated_at: Some(Timestamp::default())
-                                            }),
-                                            source_date_epoch: None,
-                                        },
-                                        "default"
-                                    ))
-                                    .await
-                                    .expect("Failed to create image in containerd");
+                                create_image_in_containerd(
+                                    container_client.clone(),
+                                    &index_to_download.full_image,
+                                    image_digest.clone(),
+                                    image_json_len as i64,
+                                )
+                                .await
+                                .expect("msg: Failed to create image in containerd");
 
                                 println!(
                                     "Thread {} downloaded index, found {} manifests.",
@@ -283,9 +376,11 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             .await
                         {
                             Ok((manifest, manifest_json)) => {
-                                println!("Thread {} downloaded manifest: {:?}", i, manifest);
+                                println!("Thread {} downloaded manifest: {:?}", i, manifest_json);
+
+                                // UPLOADING A MANIFEST //
                                 upload_content_to_containerd(
-                                    &container_client,
+                                    container_client.clone(),
                                     &manifest_to_download.digest,
                                     manifest_json.into(),
                                     {
@@ -299,6 +394,17 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                                 .library_name
                                                 .clone(),
                                         );
+                                        labels.insert(
+                                            "containerd.io/gc.ref.content.config".to_string(),
+                                            manifest.config.digest.clone(),
+                                        );
+                                        for (idx, layer) in manifest.layers.iter().enumerate() {
+                                            labels.insert(
+                                                format!("containerd.io/gc.ref.content.l.{}", idx),
+                                                layer.digest.clone(),
+                                            );
+                                        }
+
                                         labels
                                     },
                                 )
@@ -333,10 +439,11 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             .await
                         {
                             Ok((config, config_bytes)) => {
-                                println!("Thread {} downloaded config: {:?}", i, config);
+                                println!("Thread {} downloaded config: {:?}", i, config_bytes);
 
+                                // UPLOADING A CONFIG //
                                 upload_content_to_containerd(
-                                    &container_client,
+                                    container_client.clone(),
                                     &config_to_download.digest,
                                     config_bytes.into(),
                                     {
@@ -389,7 +496,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
 
                         match downloader
                             .download_layer_to_containerd(
-                                &container_client,
+                                container_client.clone(),
                                 layer_to_download.full_image.image.clone(),
                                 &layer_to_download.digest,
                                 &layer_to_download.uncompressed_digest,
@@ -453,7 +560,6 @@ pub async fn pull_command(
                 if let Some(image) = &service.image {
                     images_to_pull.insert(image.clone());
                 }
-                // Here you would call the actual pull logic, e.g., using a Docker client
             }
         }
     }
@@ -471,11 +577,19 @@ pub async fn pull_command(
 
     println!("\nAttempting to connect to containerd...");
     let container_client = Client::from_path("/run/containerd/containerd.sock").await?;
-    let version = container_client.version().version(()).await?;
-    //    container_client.content().get_content_store().await?;
-    println!("Containerd Version: {:?}", version);
+    let leased_client =
+        Arc::new(LeasedClient::new(Arc::new(container_client), "default".to_string()).await?);
 
-    let existing_digests = get_existing_digests_from_containerd(&container_client).await?;
+    println!(
+        "Leased client created with namespace: {} and lease id {}",
+        leased_client.namespace(),
+        leased_client.lease_id()
+    );
+    //let version = container_client.version().version(()).await?;
+    //    container_client.content().get_content_store().await?;
+    //println!("Containerd Version: {:?}", version);
+
+    let existing_digests = get_existing_digests_from_containerd(leased_client.clone()).await?;
     let mut download_queue = Vec::<Downloadable>::new();
 
     for image in full_images {
@@ -484,28 +598,36 @@ pub async fn pull_command(
         }));
     }
 
-    let images = container_client
+    /*let all_images = leased_client
+        .client()
         .images()
-        .list(with_namespace!(
+        .list(with_client!(
             ListImagesRequest { filters: vec![] },
-            "default"
+            leased_client
         ))
-        .await;
+        .await?
+        .into_inner();
 
-    let stream = match images {
-        Ok(response) => response.into_inner(),
-        Err(e) => {
-            eprintln!("Failed to list content: {}", e);
-            return Err(Box::new(e));
-        }
-    };
-
+    println!("Existing images in containerd: {:?}", all_images);
+    */
     let pull_instance = PullInstance {
-        container_client: Arc::new(container_client),
+        container_client: leased_client,
         existing_digests: Arc::new(Mutex::new(existing_digests)),
         download_queue: Arc::new(Mutex::new(download_queue)),
     };
 
-    run_pull(&pull_instance).await?;
-    Ok(())
+    match run_pull(&pull_instance).await {
+        Ok(_) => {
+            println!("Pull completed successfully.");
+            pull_instance.container_client.delete_lease().await;
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Error during pull: {}", e);
+            pull_instance.container_client.delete_lease().await;
+            Err(e)
+        }
+    }
+
+    //Ok(())
 }

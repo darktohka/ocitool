@@ -3,15 +3,15 @@ use tokio::fs;
 
 use crate::{
     client::{ImagePermission, ImagePermissions, OciClient, OciClientError},
-    compose::containerd::client::{
-        self,
-        services::v1::{WriteAction, WriteContentRequest},
+    compose::{
+        containerd::client::services::v1::{WriteAction, WriteContentRequest},
+        lease::LeasedClient,
     },
     macros::{impl_error, impl_from_error},
     parser::{FullImage, FullImageWithTag},
     spec::{config::ImageConfig, enums::MediaType, index::ImageIndex, manifest::ImageManifest},
     whiteout::extract_tar,
-    with_namespace,
+    with_client,
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -319,7 +319,7 @@ impl OciDownloader {
 
     pub async fn download_layer_to_containerd(
         &self,
-        container_client: &client::Client,
+        container_client: Arc<LeasedClient>,
         image: FullImage,
         digest: &str,
         uncompressed_digest: &str,
@@ -393,10 +393,16 @@ impl OciDownloader {
                     labels: HashMap::new(),
                 };
 
-                let request_stream =
-                    with_namespace!(futures_util::stream::iter(vec![upload_request]), "default");
+                let request_stream = with_client!(
+                    futures_util::stream::iter(vec![upload_request]),
+                    container_client
+                );
 
-                let content = container_client.content().write(request_stream).await?;
+                let content = container_client
+                    .client()
+                    .content()
+                    .write(request_stream)
+                    .await?;
                 offset += chunk_length as i64;
 
                 let mut stream = content.into_inner();
@@ -424,10 +430,16 @@ impl OciDownloader {
                 labels: HashMap::new(),
             };
 
-            let request_stream =
-                with_namespace!(futures_util::stream::iter(vec![upload_request]), "default");
+            let request_stream = with_client!(
+                futures_util::stream::iter(vec![upload_request]),
+                container_client
+            );
 
-            let content = container_client.content().write(request_stream).await?;
+            let content = container_client
+                .client()
+                .content()
+                .write(request_stream)
+                .await?;
 
             let mut stream = content.into_inner();
             loop {
@@ -454,10 +466,16 @@ impl OciDownloader {
             labels,
         };
 
-        let request_stream =
-            with_namespace!(futures_util::stream::iter(vec![upload_request]), "default");
+        let request_stream = with_client!(
+            futures_util::stream::iter(vec![upload_request]),
+            container_client
+        );
 
-        let content = container_client.content().write(request_stream).await?;
+        let content = container_client
+            .client()
+            .content()
+            .write(request_stream)
+            .await?;
         let mut stream = content.into_inner();
 
         loop {
