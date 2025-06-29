@@ -1,5 +1,6 @@
 use crate::cleanup::cleanup_command;
 use crate::client::{ImagePermission, ImagePermissions, OciClient};
+use crate::compose::pull::pull_command;
 use crate::parser::FullImageWithTag;
 use downloader::OciDownloaderError;
 use platform::PlatformMatcher;
@@ -15,6 +16,7 @@ use walkdir::WalkDir;
 
 mod cleanup;
 mod client;
+mod compose;
 mod digest;
 mod downloader;
 mod execution;
@@ -23,6 +25,7 @@ mod parser;
 mod platform;
 mod runner;
 mod spec;
+mod system_login;
 mod uploader;
 mod walk;
 mod whiteout;
@@ -45,6 +48,10 @@ xflags::xflags! {
             /// Sets the path to the compose directory
             /// If not set, the current directory will be used
             optional -d,--dir dir: PathBuf
+
+            /// Sets the maximum depth to search for docker-compose files
+            /// If not set, the default is 1
+            optional -m,--max-depth max_depth: usize
 
             /// Pulls all images from the respective registries
             cmd pull {
@@ -274,10 +281,12 @@ async fn main() {
                 exit(1);
             }
         }
-        OcitoolCmd::Compose(compose) => match compose.subcommand {
-            ComposeCmd::Pull(_) => {
-                println!("Pull command is not implemented yet.");
-                println!("Directory: {:?}", compose.dir);
+        OcitoolCmd::Compose(ref compose) => match compose.subcommand {
+            ComposeCmd::Pull(ref pull) => {
+                if let Err(e) = pull_command(&compose, &pull).await {
+                    eprintln!("Pull error: {}", e);
+                    exit(1);
+                }
             }
         },
     }

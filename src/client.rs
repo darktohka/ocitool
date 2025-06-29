@@ -15,7 +15,7 @@ pub struct ImagePermission {
     pub permissions: ImagePermissions,
 }
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct LoginCredentials {
     pub username: String,
     pub password: String,
@@ -25,7 +25,7 @@ pub struct OciClient {
     pub client: Client,
     pub hostname_to_login: HashMap<String, LoginCredentials>,
     pub default_login: Option<LoginCredentials>,
-    image_bearer_map: Arc<Mutex<HashMap<ImagePermission, String>>>,
+    pub image_bearer_map: Arc<Mutex<HashMap<ImagePermission, String>>>,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
@@ -111,7 +111,10 @@ impl OciClient {
                     ImagePermissions::Pull => "pull",
                     ImagePermissions::Push => "pull,push",
                 };
-                format!("repository:{}:{}", perm.full_image.image_name, permissions)
+                format!(
+                    "repository:{}:{}",
+                    perm.full_image.library_name, permissions
+                )
             })
             .collect::<Vec<_>>();
 
@@ -132,13 +135,15 @@ impl OciClient {
 
         if let Ok(credentials) = self.get_credentials(&reference_image.registry) {
             println!(
-                "Logging in as {} for {}...",
+                "Logging in as {} for {} to {}...",
                 credentials.username,
-                scopes.join("; ")
+                scopes.join("; "),
+                reference_image.registry,
             );
+
             request = request.basic_auth(credentials.username, Some(credentials.password));
         } else {
-            println!("Logging in anonymously...");
+            println!("Logging in anonymously to {}...", reference_image.registry);
         }
 
         let response = match request.send().await {
