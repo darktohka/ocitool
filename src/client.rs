@@ -115,7 +115,11 @@ impl OciClient {
             })
             .collect::<Vec<_>>();
 
-        let all_scopes = scopes.join("&");
+        let all_scopes = scopes
+            .iter()
+            .map(|scope| format!("scope={}", scope))
+            .collect::<Vec<_>>()
+            .join("&");
 
         let url = format!(
             "{}?service={}&{}",
@@ -129,7 +133,8 @@ impl OciClient {
         if let Ok(credentials) = self.get_credentials(&reference_image.registry) {
             println!(
                 "Logging in as {} for {}...",
-                credentials.username, all_scopes
+                credentials.username,
+                scopes.join("; ")
             );
             request = request.basic_auth(credentials.username, Some(credentials.password));
         } else {
