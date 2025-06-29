@@ -1,6 +1,8 @@
 use crate::compose::containerd::client::services::v1::{
-    container, ListContentRequest, WriteAction, WriteContentRequest,
+    container, CreateImageRequest, Image, ListContentRequest, ListImagesRequest, WriteAction,
+    WriteContentRequest,
 };
+use crate::compose::containerd::client::types;
 use crate::digest::sha256_digest;
 use crate::downloader::OciDownloader;
 use crate::platform::PlatformMatcher;
@@ -14,7 +16,9 @@ use crate::{
 };
 use crate::{digest, with_namespace};
 use prost::Message;
+use prost_types::Timestamp;
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::Status;
@@ -189,6 +193,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             .await
                         {
                             Ok((image_index, image_json)) => {
+                                let image_json_len = image_json.len();
                                 let image_digest = sha256_digest(&image_json.encode_to_vec());
                                 upload_content_to_containerd(
                                     &container_client,
@@ -206,6 +211,35 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 )
                                 .await
                                 .expect("Failed to upload index to containerd");
+
+                                let create_response = container_client
+                                    .images()
+                                    .create(with_namespace!(
+                                        CreateImageRequest {
+                                            image: Some(Image {
+                                                name: format!(
+                                                    "docker.io/{}:{}",
+                                                    index_to_download.full_image.image.library_name,
+                                                    index_to_download.full_image.tag
+                                                ),
+                                                labels: HashMap::new(),
+                                                target: Some(types::Descriptor {
+                                                    media_type:
+                                                        "application/vnd.oci.image.index.v1+json"
+                                                            .to_string(),
+                                                    digest: image_digest,
+                                                    size: image_json_len as i64,
+                                                    annotations: HashMap::new(),
+                                                }),
+                                                created_at: Some(Timestamp::default()),
+                                                updated_at: Some(Timestamp::default())
+                                            }),
+                                            source_date_epoch: None,
+                                        },
+                                        "default"
+                                    ))
+                                    .await
+                                    .expect("Failed to create image in containerd");
 
                                 println!(
                                     "Thread {} downloaded index, found {} manifests.",
@@ -449,6 +483,22 @@ pub async fn pull_command(
             full_image: image.clone(),
         }));
     }
+
+    let images = container_client
+        .images()
+        .list(with_namespace!(
+            ListImagesRequest { filters: vec![] },
+            "default"
+        ))
+        .await;
+
+    let stream = match images {
+        Ok(response) => response.into_inner(),
+        Err(e) => {
+            eprintln!("Failed to list content: {}", e);
+            return Err(Box::new(e));
+        }
+    };
 
     let pull_instance = PullInstance {
         container_client: Arc::new(container_client),

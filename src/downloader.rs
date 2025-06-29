@@ -400,7 +400,12 @@ impl OciDownloader {
                 offset += chunk_length as i64;
 
                 let mut stream = content.into_inner();
-                while let Ok(Some(_)) = stream.message().await {
+                loop {
+                    match stream.message().await {
+                        Ok(None) => break,
+                        Ok(_) => {}
+                        Err(e) => return Err(e.into()),
+                    }
                     // Wait for the upload to complete
                 }
             }
@@ -425,7 +430,12 @@ impl OciDownloader {
             let content = container_client.content().write(request_stream).await?;
 
             let mut stream = content.into_inner();
-            while let Ok(Some(_)) = stream.message().await {
+            loop {
+                match stream.message().await {
+                    Ok(None) => break,
+                    Ok(_) => {}
+                    Err(e) => return Err(e.into()),
+                }
                 // Wait for the upload to complete
             }
 
@@ -450,7 +460,12 @@ impl OciDownloader {
         let content = container_client.content().write(request_stream).await?;
         let mut stream = content.into_inner();
 
-        while let Ok(Some(_)) = stream.message().await {
+        loop {
+            match stream.message().await {
+                Ok(None) => break,
+                Ok(_) => {}
+                Err(e) => return Err(e.into()),
+            }
             // Wait for the upload to complete
         }
 
