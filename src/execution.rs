@@ -221,7 +221,12 @@ impl PlanExecution {
                         let image_name = layer.source.clone();
                         let image = FullImageWithTag::from_image_name(&image_name);
 
-                        let index = self.downloader.download_index(image.clone()).await.unwrap();
+                        let index = self
+                            .downloader
+                            .download_index(image.clone())
+                            .await
+                            .unwrap()
+                            .0;
 
                         let platform_matcher =
                             PlatformMatcher::match_architecture(platform.architecture.clone());
@@ -235,7 +240,8 @@ impl PlanExecution {
                             .downloader
                             .download_manifest(image.image.clone(), &manifest.digest)
                             .await
-                            .unwrap();
+                            .unwrap()
+                            .0;
 
                         let downloaded_config: ImageConfig = self
                             .downloader
@@ -244,7 +250,8 @@ impl PlanExecution {
                                 &downloaded_manifest.config.digest,
                             )
                             .await
-                            .unwrap();
+                            .unwrap()
+                            .0;
 
                         let mut tar_layers: Vec<(Vec<u8>, Digest)> = vec![];
 

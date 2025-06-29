@@ -1102,11 +1102,13 @@ name = "ocitool"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "bytes",
  "cjson",
  "derive_builder",
  "dirs",
  "flate2",
  "futures",
+ "futures-util",
  "humansize",
  "hyper-util",
  "indexmap",

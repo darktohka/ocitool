@@ -8,6 +8,7 @@ use crate::{
     spec::{config::ImageConfig, enums::MediaType, index::ImageIndex, manifest::ImageManifest},
     whiteout::extract_tar,
 };
+use bytes::Bytes;
 use std::{io::Read, path::PathBuf, sync::Arc};
 
 impl_error!(OciDownloaderError);
@@ -40,7 +41,7 @@ impl OciDownloader {
     pub async fn download_index(
         &self,
         image: FullImageWithTag,
-    ) -> Result<ImageIndex, OciDownloaderError> {
+    ) -> Result<(ImageIndex, String), OciDownloaderError> {
         let url = format!("{}/manifests/{}", image.image.get_image_url(), image.tag);
         println!("Downloading {}:{}...", image.image.image_name, image.tag);
 
@@ -71,7 +72,7 @@ impl OciDownloader {
 
         let json = response.text().await?;
         let image_index: ImageIndex = serde_json::from_str(&json)?;
-        Ok(image_index)
+        Ok((image_index, json))
     }
 
     pub async fn load_blob_cache(&self, digest: &str) -> Option<Vec<u8>> {
@@ -101,10 +102,10 @@ impl OciDownloader {
         &self,
         image: FullImage,
         digest: &str,
-    ) -> Result<ImageManifest, OciDownloaderError> {
+    ) -> Result<(ImageManifest, Bytes), OciDownloaderError> {
         if let Some(blob) = self.load_blob_cache(digest).await {
             if let Ok(manifest) = serde_json::from_slice(&blob) {
-                return Ok(manifest);
+                return Ok((manifest, blob.into()));
             }
         }
 
@@ -140,17 +141,17 @@ impl OciDownloader {
         let json = response.bytes().await?;
         self.write_blob_cache(digest, &json)?;
         let result = serde_json::from_slice(&json)?;
-        Ok(result)
+        Ok((result, json))
     }
 
     pub async fn download_config(
         &self,
         image: FullImage,
         digest: &str,
-    ) -> Result<ImageConfig, OciDownloaderError> {
+    ) -> Result<(ImageConfig, Bytes), OciDownloaderError> {
         if let Some(blob) = self.load_blob_cache(digest).await {
             if let Ok(config) = serde_json::from_slice(&blob) {
-                return Ok(config);
+                return Ok((config, blob.into()));
             }
         }
 
@@ -185,7 +186,7 @@ impl OciDownloader {
         let json = response.bytes().await?;
         self.write_blob_cache(digest, &json)?;
         let result = serde_json::from_slice(&json)?;
-        Ok(result)
+        Ok((result, json))
     }
 
     pub async fn extract_layer_bytes_to<T: Read>(

@@ -213,7 +213,7 @@ async fn run_command(
 
     let downloader = downloader::OciDownloader::new(client, no_cache);
 
-    let index = downloader.download_index(image.clone()).await.unwrap();
+    let index = downloader.download_index(image.clone()).await.unwrap().0;
 
     let platform_matcher = PlatformMatcher::new();
     let manifest = platform_matcher
@@ -224,12 +224,14 @@ async fn run_command(
     let downloaded_manifest: spec::manifest::ImageManifest = downloader
         .download_manifest(image.image.clone(), &manifest.digest)
         .await
-        .unwrap();
+        .unwrap()
+        .0;
 
     let downloaded_config = downloader
         .download_config(image.image.clone(), &downloaded_manifest.config.digest)
         .await
-        .unwrap();
+        .unwrap()
+        .0;
 
     let tmpdir = tempfile::tempdir().unwrap();
     let tmpdir_path = tmpdir.path();

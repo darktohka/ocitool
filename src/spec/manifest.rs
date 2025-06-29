@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use super::enums::MediaType;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Descriptor {
     #[serde(rename = "mediaType")]
     pub media_type: MediaType,

@@ -31,7 +31,7 @@ impl FullImage {
     }
 
     pub fn get_image_url(&self) -> String {
-        format!("{}/v2/{}", self.registry, self.image_name)
+        format!("{}/v2/{}", self.registry, self.library_name)
     }
 
     pub fn is_github_registry(&self) -> bool {
