@@ -323,6 +323,8 @@ impl OciDownloader {
         image: FullImage,
         digest: &str,
         uncompressed_digest: &str,
+        progress_bar: indicatif::ProgressBar,
+        downloaded_bytes: Arc<tokio::sync::Mutex<u64>>,
     ) -> Result<(), OciDownloaderError> {
         let url = format!("{}/blobs/{}", image.get_image_url(), digest);
         // println!("Downloading layer {}:{}...", image.image_name, digest);
@@ -404,6 +406,8 @@ impl OciDownloader {
                     .write(request_stream)
                     .await?;
                 offset += chunk_length as i64;
+                *downloaded_bytes.lock().await += chunk_length as u64;
+                progress_bar.set_position(*downloaded_bytes.lock().await);
 
                 let mut stream = content.into_inner();
                 loop {
@@ -453,6 +457,8 @@ impl OciDownloader {
 
             // Update the offset after the final write
             offset += length as i64;
+            *downloaded_bytes.lock().await += length as u64;
+            progress_bar.set_position(*downloaded_bytes.lock().await);
         }
 
         // Finalize with a commit

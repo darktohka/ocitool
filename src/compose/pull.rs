@@ -15,6 +15,8 @@ use crate::{
     system_login::get_system_login,
     Compose, Pull,
 };
+use humansize::{format_size, BINARY};
+use indicatif::{ProgressBar, ProgressStyle};
 use prost_types::Timestamp;
 use sha256::digest;
 use std::collections::{HashMap, HashSet};
@@ -59,6 +61,9 @@ pub struct PullInstance {
     pub container_client: Arc<LeasedClient>,
     pub existing_digests: Arc<Mutex<HashSet<String>>>,
     pub download_queue: Arc<Mutex<Vec<Downloadable>>>,
+    pub total_bytes_to_download: Arc<Mutex<u64>>,
+    pub downloaded_bytes: Arc<Mutex<u64>>,
+    pub progress_bar: ProgressBar,
 }
 
 pub async fn get_existing_digests_from_containerd(
@@ -132,14 +137,9 @@ pub async fn upload_content_to_containerd(
     };
 
     let mut stream = content.into_inner();
-    if let Ok(Some(response)) = stream.message().await {
-        println!(
-            "Successfully uploaded content with digest: {}",
-            response.digest
-        );
+    if let Ok(Some(_response)) = stream.message().await {
+        // Wait for the upload to complete
     }
-
-    println!("Content upload completed successfully.");
 
     Ok(())
 }
@@ -244,6 +244,9 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
     client.login(&image_permissions).await?;
 
     let downloader = Arc::new(OciDownloader::new(client.clone(), true));
+    let progress_bar = pull_instance.progress_bar.clone();
+    let total_bytes_to_download = pull_instance.total_bytes_to_download.clone();
+    let downloaded_bytes = pull_instance.downloaded_bytes.clone();
     let mut tasks = vec![];
 
     for i in 0..8 {
@@ -251,17 +254,22 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
         let download_queue = pull_instance.download_queue.clone();
         let existing_digests = pull_instance.existing_digests.clone();
         let container_client = pull_instance.container_client.clone();
+        let progress_bar = progress_bar.clone();
+        let total_bytes_to_download = total_bytes_to_download.clone();
+        let downloaded_bytes = downloaded_bytes.clone();
 
         let task = tokio::spawn(async move {
             let platform_matcher = PlatformMatcher::new();
 
-            let queue_if_not_download = async |digest: &str, something| {
+            let queue_if_not_download = async |digest: &str, something, size| {
                 let mut existing_digests = existing_digests.lock().await;
 
                 if !existing_digests.contains(digest) {
                     let mut queue = download_queue.lock().await;
                     queue.push(something);
                     existing_digests.insert(digest.to_string());
+                    *total_bytes_to_download.lock().await += size as u64;
+                    progress_bar.set_length(*total_bytes_to_download.lock().await);
                 }
             };
 
@@ -278,6 +286,11 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             Ok((image_index, image_json)) => {
                                 let image_json_len = image_json.len();
                                 let image_digest = format!("sha256:{}", digest(&image_json));
+
+                                *total_bytes_to_download.lock().await += image_json_len as u64;
+                                *downloaded_bytes.lock().await += image_json_len as u64;
+                                progress_bar.set_length(*total_bytes_to_download.lock().await);
+                                progress_bar.set_position(*downloaded_bytes.lock().await);
 
                                 if !existing_digests.lock().await.contains(&image_digest) {
                                     upload_content_to_containerd(
@@ -311,6 +324,8 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                     )
                                     .await
                                     .expect("Failed to upload index to containerd");
+                                    *downloaded_bytes.lock().await += image_json_len as u64;
+                                    progress_bar.set_position(*downloaded_bytes.lock().await);
                                 }
 
                                 create_image_in_containerd(
@@ -320,7 +335,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                     image_json_len as i64,
                                 )
                                 .await
-                                .expect("msg: Failed to create image in containerd");
+                                .expect("Failed to create image in containerd");
 
                                 let manifest =
                                     platform_matcher.find_manifest(&image_index.manifests);
@@ -332,6 +347,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                             digest: manifest.digest.clone(),
                                             full_image: index_to_download.full_image.clone(),
                                         }),
+                                        manifest.size,
                                     )
                                     .await;
                                 }
@@ -350,11 +366,14 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             .await
                         {
                             Ok((manifest, manifest_json)) => {
+                                *downloaded_bytes.lock().await += manifest_json.len() as u64;
+                                progress_bar.set_position(*downloaded_bytes.lock().await);
+
                                 // UPLOADING A MANIFEST //
                                 upload_content_to_containerd(
                                     container_client.clone(),
                                     &manifest_to_download.digest,
-                                    manifest_json.into(),
+                                    manifest_json.clone().into(),
                                     {
                                         let mut labels = HashMap::new();
                                         labels.insert(
@@ -382,6 +401,8 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 )
                                 .await
                                 .expect("Failed to upload manifest to containerd");
+                                *downloaded_bytes.lock().await += manifest_json.len() as u64;
+                                progress_bar.set_position(*downloaded_bytes.lock().await);
 
                                 queue_if_not_download(
                                     &manifest.config.digest,
@@ -390,6 +411,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                         layers: manifest.layers.clone(),
                                         digest: manifest.config.digest.clone(),
                                     }),
+                                    manifest.config.size,
                                 )
                                 .await;
                             }
@@ -411,7 +433,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 upload_content_to_containerd(
                                     container_client.clone(),
                                     &config_to_download.digest,
-                                    config_bytes.into(),
+                                    config_bytes.clone().into(),
                                     {
                                         let mut labels = HashMap::new();
                                         labels.insert(
@@ -428,6 +450,8 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 )
                                 .await
                                 .expect("Failed to upload config to containerd");
+                                *downloaded_bytes.lock().await += config_bytes.len() as u64;
+                                progress_bar.set_position(*downloaded_bytes.lock().await);
 
                                 for (idx, layer) in config_to_download.layers.iter().enumerate() {
                                     let layer_digest = layer.digest.clone();
@@ -445,6 +469,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                             digest: layer_digest,
                                             uncompressed_digest,
                                         }),
+                                        layer.size,
                                     )
                                     .await;
                                 }
@@ -461,6 +486,8 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 layer_to_download.full_image.image.clone(),
                                 &layer_to_download.digest,
                                 &layer_to_download.uncompressed_digest,
+                                progress_bar.clone(),
+                                downloaded_bytes.clone(),
                             )
                             .await
                         {
@@ -486,6 +513,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
     }
 
     futures::future::join_all(tasks).await;
+    progress_bar.finish_with_message("Download complete!");
     Ok(())
 }
 
@@ -527,20 +555,11 @@ pub async fn pull_command(
         .into_iter()
         .map(|image| FullImageWithTag::from_image_name(&image))
         .collect();
-    for image in &full_images {
-        println!("Would pull image: {:?}", image);
-    }
 
-    println!("\nAttempting to connect to containerd...");
     let container_client = Client::from_path("/run/containerd/containerd.sock").await?;
     let leased_client =
         Arc::new(LeasedClient::new(Arc::new(container_client), "default".to_string()).await?);
 
-    println!(
-        "Leased client created with namespace: {} and lease id {}",
-        leased_client.namespace(),
-        leased_client.lease_id()
-    );
     //let version = container_client.version().version(()).await?;
     //    container_client.content().get_content_store().await?;
     //println!("Containerd Version: {:?}", version);
@@ -566,10 +585,19 @@ pub async fn pull_command(
 
     println!("Existing images in containerd: {:?}", all_images);
     */
+    let progress_bar = ProgressBar::new(0);
+    progress_bar.set_style(ProgressStyle::default_bar()
+        .template("{msg} {spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+        .expect("Failed to set progress bar style")
+        .progress_chars("#>-"));
+
     let pull_instance = PullInstance {
         container_client: leased_client,
         existing_digests: Arc::new(Mutex::new(existing_digests)),
         download_queue: Arc::new(Mutex::new(download_queue)),
+        total_bytes_to_download: Arc::new(Mutex::new(0)),
+        downloaded_bytes: Arc::new(Mutex::new(0)),
+        progress_bar,
     };
 
     match run_pull(&pull_instance).await {
