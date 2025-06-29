@@ -27,8 +27,7 @@ humansize = "2"
 futures = "0"
 derive_builder = "0"
 indexmap = { version = "2", features = ["std", "serde"] }
-containerd-client = "0"
-
+containerd-client = { git = "https://github.com/containerd/rust-extensions" }
 
 [profile.release-lto]
 inherits = "release"
@@ -36,3 +35,8 @@ lto = true
 strip = true
 panic = "abort"
 codegen-units = 1
+
+[build]
+pre-build = [
+    "apt-get update && apt-get --assume-yes install protobuf-compiler"
+]
