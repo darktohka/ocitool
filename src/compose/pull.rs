@@ -1,3 +1,5 @@
+use containerd_client::Client;
+
 use crate::{
     client::{ImagePermission, ImagePermissions, OciClient},
     compose::docker_compose_finder::find_and_parse_docker_composes,
@@ -59,6 +61,11 @@ pub async fn pull_command(
             permissions: ImagePermissions::Pull,
         })
         .collect::<Vec<_>>();
+
+    println!("\nAttempting to connect to containerd...");
+    let client = Client::from_path("/run/containerd/containerd.sock").await?;
+    let version = client.version().version(()).await?;
+    println!("Containerd Version: {:?}", version);
 
     client.login(&image_permissions).await?;
 
