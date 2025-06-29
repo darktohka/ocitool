@@ -1,9 +1,10 @@
 use flate2::read::GzDecoder;
-use tokio::{fs, sync::Mutex};
+use tokio::fs;
 
 use crate::{
-    client::{ImagePermissions, OciClient, OciClientError},
+    client::{ImagePermission, ImagePermissions, OciClient, OciClientError},
     macros::{impl_error, impl_from_error},
+    parser::{FullImage, FullImageWithTag},
     spec::{config::ImageConfig, enums::MediaType, index::ImageIndex, manifest::ImageManifest},
     whiteout::extract_tar,
 };
@@ -16,13 +17,13 @@ impl_from_error!(serde_json::Error, OciDownloaderError);
 impl_from_error!(std::io::Error, OciDownloaderError);
 
 pub struct OciDownloader {
-    client: Arc<Mutex<OciClient>>,
+    pub client: Arc<OciClient>,
     blob_dir: PathBuf,
     no_cache: bool,
 }
 
 impl OciDownloader {
-    pub fn new(client: Arc<Mutex<OciClient>>, no_cache: bool) -> Self {
+    pub fn new(client: Arc<OciClient>, no_cache: bool) -> Self {
         let cache_dir = match dirs::cache_dir() {
             Some(dir) => dir.join("ocitool"),
             None => PathBuf::from("/tmp/ocitool"),
@@ -38,20 +39,21 @@ impl OciDownloader {
 
     pub async fn download_index(
         &self,
-        image_name: &str,
-        tag: &str,
+        image: FullImageWithTag,
     ) -> Result<ImageIndex, OciDownloaderError> {
-        let mut client = self.client.lock().await;
-        let url = format!("{}/manifests/{}", client.get_image_url(image_name), tag);
+        let url = format!("{}/manifests/{}", image.image.get_image_url(), image.tag);
+        println!("Downloading {}:{}...", image.image.image_name, image.tag);
 
-        println!("Downloading {}:{}...", image_name, tag);
-
-        let response = client
+        let response = self
+            .client
             .client
             .get(&url)
             .headers(
-                client
-                    .auth_headers(image_name, ImagePermissions::Pull)
+                self.client
+                    .auth_headers(ImagePermission {
+                        full_image: image.image,
+                        permissions: ImagePermissions::Pull,
+                    })
                     .await?,
             )
             .header("Accept", "application/vnd.oci.image.index.v1+json")
@@ -97,7 +99,7 @@ impl OciDownloader {
 
     pub async fn download_manifest(
         &self,
-        image_name: &str,
+        image: FullImage,
         digest: &str,
     ) -> Result<ImageManifest, OciDownloaderError> {
         if let Some(blob) = self.load_blob_cache(digest).await {
@@ -106,17 +108,20 @@ impl OciDownloader {
             }
         }
 
-        let mut client = self.client.lock().await;
-        let url = format!("{}/manifests/{}", client.get_image_url(image_name), digest);
+        let url = format!("{}/manifests/{}", image.get_image_url(), digest);
 
-        println!("Downloading manifest {}:{}...", image_name, digest);
+        println!("Downloading manifest {}:{}...", image.image_name, digest);
 
-        let response = client
+        let response = self
+            .client
             .client
             .get(&url)
             .headers(
-                client
-                    .auth_headers(image_name, ImagePermissions::Pull)
+                self.client
+                    .auth_headers(ImagePermission {
+                        full_image: image,
+                        permissions: ImagePermissions::Pull,
+                    })
                     .await?,
             )
             .header("Accept", "application/vnd.oci.image.manifest.v1+json")
@@ -140,7 +145,7 @@ impl OciDownloader {
 
     pub async fn download_config(
         &self,
-        image_name: &str,
+        image: FullImage,
         digest: &str,
     ) -> Result<ImageConfig, OciDownloaderError> {
         if let Some(blob) = self.load_blob_cache(digest).await {
@@ -149,17 +154,20 @@ impl OciDownloader {
             }
         }
 
-        let mut client = self.client.lock().await;
-        let url = format!("{}/blobs/{}", client.get_image_url(image_name), digest);
+        let url = format!("{}/blobs/{}", image.get_image_url(), digest);
 
-        println!("Downloading config {}:{}...", image_name, digest);
+        println!("Downloading config {}:{}...", image.image_name, digest);
 
-        let response = client
+        let response = self
+            .client
             .client
             .get(&url)
             .headers(
-                client
-                    .auth_headers(image_name, ImagePermissions::Pull)
+                self.client
+                    .auth_headers(ImagePermission {
+                        full_image: image,
+                        permissions: ImagePermissions::Pull,
+                    })
                     .await?,
             )
             .send()
@@ -212,7 +220,7 @@ impl OciDownloader {
 
     pub async fn extract_layer(
         &self,
-        image_name: &str,
+        image: FullImage,
         digest: &str,
         media_type: &MediaType,
         dest_dir: &PathBuf,
@@ -224,16 +232,19 @@ impl OciDownloader {
             return Ok(());
         }
 
-        let mut client = self.client.lock().await;
-        let url = format!("{}/blobs/{}", client.get_image_url(image_name), digest);
-        println!("Downloading layer {}:{}...", image_name, digest);
+        let url = format!("{}/blobs/{}", image.get_image_url(), digest);
+        println!("Downloading layer {}:{}...", image.image_name, digest);
 
-        let response = client
+        let response = self
+            .client
             .client
             .get(&url)
             .headers(
-                client
-                    .auth_headers(image_name, ImagePermissions::Pull)
+                self.client
+                    .auth_headers(ImagePermission {
+                        full_image: image,
+                        permissions: ImagePermissions::Pull,
+                    })
                     .await?,
             )
             .send()
@@ -258,23 +269,26 @@ impl OciDownloader {
 
     pub async fn download_layer(
         &self,
-        image_name: &str,
+        image: FullImage,
         digest: &str,
     ) -> Result<Vec<u8>, OciDownloaderError> {
         if let Some(blob) = self.load_blob_cache(digest).await {
             return Ok(blob);
         }
 
-        let mut client = self.client.lock().await;
-        let url = format!("{}/blobs/{}", client.get_image_url(image_name), digest);
-        println!("Downloading layer {}:{}...", image_name, digest);
+        let url = format!("{}/blobs/{}", image.get_image_url(), digest);
+        println!("Downloading layer {}:{}...", image.image_name, digest);
 
-        let response = client
+        let response = self
+            .client
             .client
             .get(&url)
             .headers(
-                client
-                    .auth_headers(image_name, ImagePermissions::Pull)
+                self.client
+                    .auth_headers(ImagePermission {
+                        full_image: image,
+                        permissions: ImagePermissions::Pull,
+                    })
                     .await?,
             )
             .send()

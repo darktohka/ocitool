@@ -1,17 +1,17 @@
 use crate::{
-    client::{ImagePermissions, OciClient, OciClientError},
+    client::{ImagePermission, ImagePermissions, OciClient, OciClientError},
     execution::Blob,
     macros::{impl_error, impl_from_error},
+    parser::{FullImage, FullImageWithTag},
 };
 use reqwest::{
     header::{CONTENT_LENGTH, CONTENT_TYPE},
     StatusCode,
 };
 use std::{collections::HashSet, sync::Arc};
-use tokio::sync::Mutex;
 
 pub struct OciUploader {
-    client: Arc<Mutex<OciClient>>,
+    client: Arc<OciClient>,
     uploaded_blobs: HashSet<String>,
 }
 
@@ -20,7 +20,7 @@ impl_from_error!(OciClientError, OciUploaderError);
 impl_from_error!(reqwest::Error, OciUploaderError);
 
 impl OciUploader {
-    pub fn new(client: Arc<Mutex<OciClient>>) -> Self {
+    pub fn new(client: Arc<OciClient>) -> Self {
         OciUploader {
             client,
             uploaded_blobs: HashSet::new(),
@@ -29,7 +29,7 @@ impl OciUploader {
 
     async fn blob_exists(
         &mut self,
-        image_name: &str,
+        image: FullImage,
         blob: &Blob,
     ) -> Result<bool, OciUploaderError> {
         if self.uploaded_blobs.contains(&blob.digest) {
@@ -39,15 +39,17 @@ impl OciUploader {
 
         println!("Checking blob {}...", blob.digest);
 
-        let mut client = self.client.lock().await;
-
-        let url = format!("{}/blobs/{}", client.get_image_url(image_name), blob.digest);
-        let response = client
+        let url = format!("{}/blobs/{}", image.get_image_url(), blob.digest);
+        let response = self
+            .client
             .client
             .head(&url)
             .headers(
-                client
-                    .auth_headers(image_name, ImagePermissions::Push)
+                self.client
+                    .auth_headers(ImagePermission {
+                        full_image: image,
+                        permissions: ImagePermissions::Push,
+                    })
                     .await?,
             )
             .send()
@@ -73,28 +75,41 @@ impl OciUploader {
 
     pub async fn upload_blob(
         &mut self,
-        image_name: &str,
+        image: FullImage,
         blob: &Blob,
     ) -> Result<(), OciUploaderError> {
-        let exists = self.blob_exists(image_name, &blob).await?;
+        let exists = self.blob_exists(image.clone(), &blob).await?;
 
         if exists {
             println!("Blob {} already exists.", blob.digest);
             return Ok(());
         }
 
-        let mut client = self.client.lock().await;
-        let headers = client
-            .auth_headers(image_name, ImagePermissions::Push)
+        let url = format!("{}/blobs/uploads/", image.get_image_url());
+        let registry = image.registry.clone();
+
+        let headers = self
+            .client
+            .auth_headers(ImagePermission {
+                full_image: image,
+                permissions: ImagePermissions::Push,
+            })
             .await?;
 
-        let url = format!("{}/blobs/uploads/", client.get_image_url(image_name));
-        let response = client
+        let response = self
+            .client
             .client
             .post(&url)
             .headers(headers.clone())
             .send()
             .await?;
+
+        if !response.status().is_success() {
+            return Err(OciUploaderError(format!(
+                "Failed to initiate blob upload: {}",
+                response.status()
+            )));
+        }
 
         let location = response
             .headers()
@@ -104,7 +119,7 @@ impl OciUploader {
             .map_err(|e| OciUploaderError(e.to_string()))?;
 
         let location = if location.starts_with('/') {
-            format!("{}{}", client.registry, location)
+            format!("{}{}", registry, location)
         } else {
             location.to_string()
         };
@@ -115,7 +130,8 @@ impl OciUploader {
             format!("{}?digest={}", location, blob.digest)
         };
 
-        let request = client
+        let request = self
+            .client
             .client
             .put(upload_url)
             .headers(headers)
@@ -137,22 +153,24 @@ impl OciUploader {
 
     pub async fn upload_manifest(
         &self,
-        image_name: &str,
+        image: FullImageWithTag,
         manifest_data: Vec<u8>,
         content_type: &str,
-        tag: &str,
     ) -> Result<(), OciUploaderError> {
-        let mut client = self.client.lock().await;
-        let url = format!("{}/manifests/{}", client.get_image_url(image_name), tag);
+        let url = format!("{}/manifests/{}", image.image.get_image_url(), image.tag);
 
-        println!("Uploading {}:{}...", image_name, tag);
+        println!("Uploading {}:{}...", image.image.image_name, image.tag);
 
-        let response = client
+        let response = self
+            .client
             .client
             .put(&url)
             .headers(
-                client
-                    .auth_headers(image_name, ImagePermissions::Push)
+                self.client
+                    .auth_headers(ImagePermission {
+                        full_image: image.image,
+                        permissions: ImagePermissions::Push,
+                    })
                     .await?,
             )
             .header("Content-Type", content_type)

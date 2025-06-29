@@ -16,28 +16,6 @@ pub struct ImagePlan {
     pub config: Option<ImagePlanConfig>,
 }
 
-impl ImagePlan {
-    pub fn get_registry_url(&self) -> String {
-        let parts: Vec<&str> = self.name.split('/').collect();
-
-        if parts.len() > 2 {
-            format!("https://{}", parts[0])
-        } else {
-            "https://registry-1.docker.io".to_string()
-        }
-    }
-
-    pub fn get_service_url(&self) -> String {
-        let parts: Vec<&str> = self.name.split('/').collect();
-
-        if parts.len() > 2 {
-            parts[0].to_string()
-        } else {
-            "registry.docker.io".to_string()
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ImagePlanConfig {
     #[serde(skip_serializing_if = "Option::is_none")]

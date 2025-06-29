@@ -1,8 +1,8 @@
 use crate::{
-    client::OciClient,
+    client::{ImagePermission, ImagePermissions, OciClient},
     digest::sha256_digest,
     downloader::OciDownloader,
-    parser::ParsedImage,
+    parser::{FullImage, FullImageWithTag},
     platform::PlatformMatcher,
     spec::{
         config::{History, ImageConfig, RootFs},
@@ -16,10 +16,9 @@ use crate::{
 };
 use regex_lite::Regex;
 use time::OffsetDateTime;
-use tokio::sync::Mutex;
 
 use crate::spec::plan::{ImagePlan, ImagePlanLayerType};
-use std::{io::Write, sync::Arc};
+use std::{collections::HashSet, io::Write, sync::Arc};
 use tar::Builder;
 use zstd::stream::write::Encoder;
 
@@ -74,7 +73,7 @@ impl Layer {
 impl PlanExecution {
     pub fn new(
         plan: ImagePlan,
-        client: Arc<Mutex<OciClient>>,
+        client: Arc<OciClient>,
         no_cache: bool,
         compression_level: i32,
     ) -> Self {
@@ -132,13 +131,32 @@ impl PlanExecution {
 
     pub async fn execute(&mut self) -> Result<(), OciUploaderError> {
         let mut manifests: Vec<Manifest> = vec![];
-        let full_image_name = self.plan.name.clone();
-        let parts = full_image_name.split('/').collect::<Vec<&str>>();
-        let image_name: String = if parts.len() == 3 {
-            parts[1..].join("/")
-        } else {
-            full_image_name.to_owned()
-        };
+        let full_image = FullImage::from_image_name(&self.plan.name);
+
+        // First things first, log into every registry necessary
+        let mut image_permissions = HashSet::<ImagePermission>::new();
+
+        image_permissions.insert(ImagePermission {
+            full_image: full_image.clone(),
+            permissions: ImagePermissions::Push,
+        });
+
+        for platform in &self.plan.platforms {
+            for layer in &platform.layers {
+                if let ImagePlanLayerType::Image = layer.layer_type {
+                    let image_name = layer.source.clone();
+                    let image = FullImageWithTag::from_image_name(&image_name);
+
+                    image_permissions.insert(ImagePermission {
+                        full_image: image.image.clone(),
+                        permissions: ImagePermissions::Pull,
+                    });
+                }
+            }
+        }
+
+        let image_permissions_vec: Vec<ImagePermission> = image_permissions.into_iter().collect();
+        self.downloader.client.login(&image_permissions_vec).await?;
 
         for platform in &self.plan.platforms {
             let mut layers: Vec<Layer> = vec![];
@@ -201,13 +219,9 @@ impl PlanExecution {
                     }
                     ImagePlanLayerType::Image => {
                         let image_name = layer.source.clone();
-                        let image = ParsedImage::from_image_name(&image_name);
+                        let image = FullImageWithTag::from_image_name(&image_name);
 
-                        let index = self
-                            .downloader
-                            .download_index(&image.library_name, &image.tag)
-                            .await
-                            .unwrap();
+                        let index = self.downloader.download_index(image.clone()).await.unwrap();
 
                         let platform_matcher =
                             PlatformMatcher::match_architecture(platform.architecture.clone());
@@ -219,14 +233,14 @@ impl PlanExecution {
 
                         let downloaded_manifest: ImageManifest = self
                             .downloader
-                            .download_manifest(&image.library_name, &manifest.digest)
+                            .download_manifest(image.image.clone(), &manifest.digest)
                             .await
                             .unwrap();
 
                         let downloaded_config: ImageConfig = self
                             .downloader
                             .download_config(
-                                &image.library_name,
+                                image.image.clone(),
                                 &downloaded_manifest.config.digest,
                             )
                             .await
@@ -237,7 +251,7 @@ impl PlanExecution {
                         for (index, layer) in downloaded_manifest.layers.iter().enumerate() {
                             let layer_data = self
                                 .downloader
-                                .download_layer(&image.library_name, &layer.digest)
+                                .download_layer(image.image.clone(), &layer.digest)
                                 .await
                                 .unwrap();
 
@@ -258,7 +272,7 @@ impl PlanExecution {
                 for (tar_buffer, digest) in tar_buffers {
                     let layer_comment = layer.comment.clone();
                     let (blob, new_layer) = self.build_layer(tar_buffer, digest, &layer_comment);
-                    self.uploader.upload_blob(&image_name, &blob).await?;
+                    self.uploader.upload_blob(full_image.clone(), &blob).await?;
                     layers.push(new_layer);
                 }
             }
@@ -289,7 +303,9 @@ impl PlanExecution {
                 data: config_data,
             };
 
-            self.uploader.upload_blob(&image_name, &config_blob).await?;
+            self.uploader
+                .upload_blob(full_image.clone(), &config_blob)
+                .await?;
 
             let manifest = ImageManifest {
                 schema_version: 2,
@@ -330,10 +346,12 @@ impl PlanExecution {
             for tag in &self.plan.tags {
                 self.uploader
                     .upload_manifest(
-                        &image_name,
+                        FullImageWithTag {
+                            image: full_image.clone(),
+                            tag: tag.to_string(),
+                        },
                         manifest_data.clone(),
                         "application/vnd.oci.image.manifest.v1+json",
-                        tag,
                     )
                     .await?;
             }
@@ -351,10 +369,12 @@ impl PlanExecution {
         for tag in &self.plan.tags {
             self.uploader
                 .upload_manifest(
-                    &image_name,
+                    FullImageWithTag {
+                        image: full_image.clone(),
+                        tag: tag.to_string(),
+                    },
                     index_data.clone(),
                     "application/vnd.oci.image.index.v1+json",
-                    tag,
                 )
                 .await?;
         }

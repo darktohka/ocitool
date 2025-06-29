@@ -23,6 +23,7 @@ tempfile = "3"
 dirs = "6"
 which = "8"
 humansize = "2"
+futures = "0"
 
 [profile.release-lto]
 inherits = "release"
