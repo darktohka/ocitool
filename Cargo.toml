@@ -27,7 +27,15 @@ humansize = "2"
 futures = "0"
 derive_builder = "0"
 indexmap = { version = "2", features = ["std", "serde"] }
-containerd-client = { git = "https://github.com/containerd/rust-extensions" }
+prost = "0.13"
+tonic = "0.13"
+prost-types = "0.13"
+tower = { version = "0.5.2", features = ["futures-core", "futures-util", "indexmap", "tokio"] }
+hyper-util = "0.1.14"
+
+[build-dependencies]
+#tonic-build = "0.13"
+#prost-build = "0.13"
 
 [profile.release-lto]
 inherits = "release"

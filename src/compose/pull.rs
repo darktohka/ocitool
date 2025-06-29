@@ -1,13 +1,20 @@
-use containerd_client::Client;
-
+use crate::compose::containerd::client::services::v1::ListContentRequest;
+use crate::with_namespace;
 use crate::{
     client::{ImagePermission, ImagePermissions, OciClient},
-    compose::docker_compose_finder::find_and_parse_docker_composes,
+    compose::{containerd::client::Client, docker_compose_finder::find_and_parse_docker_composes},
     parser::FullImageWithTag,
     system_login::get_system_login,
     Compose, Pull,
 };
 use std::collections::HashSet;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tonic::Request;
+
+pub struct PullInstance {
+    pub existing_digests: Arc<Mutex<HashSet<String>>>,
+}
 
 pub async fn pull_command(
     compose_settings: &Compose,
@@ -65,7 +72,36 @@ pub async fn pull_command(
     println!("\nAttempting to connect to containerd...");
     let container_client = Client::from_path("/run/containerd/containerd.sock").await?;
     let version = container_client.version().version(()).await?;
+    //    container_client.content().get_content_store().await?;
     println!("Containerd Version: {:?}", version);
+
+    let list_content_request = with_namespace!(ListContentRequest { filters: vec![] }, "default");
+    let content = container_client.content().list(list_content_request).await;
+
+    let mut stream = match content {
+        Ok(response) => response.into_inner(),
+        Err(e) => {
+            eprintln!("Failed to list content: {}", e);
+            return Err(Box::new(e));
+        }
+    };
+
+    println!("Streaming content items:");
+    let mut existing_digests = HashSet::<String>::new();
+    while let Some(item) = stream.message().await? {
+        for info in &item.info {
+            existing_digests.insert(info.digest.clone());
+        }
+    }
+
+    let pull_instance = PullInstance {
+        existing_digests: Arc::new(Mutex::new(existing_digests)),
+    };
+
+    println!(
+        "Existing content digests: {:?}",
+        pull_instance.existing_digests.lock().await
+    );
 
     client.login(&image_permissions).await?;
 
