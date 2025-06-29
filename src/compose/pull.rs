@@ -63,8 +63,8 @@ pub async fn pull_command(
         .collect::<Vec<_>>();
 
     println!("\nAttempting to connect to containerd...");
-    let client = Client::from_path("/run/containerd/containerd.sock").await?;
-    let version = client.version().version(()).await?;
+    let container_client = Client::from_path("/run/containerd/containerd.sock").await?;
+    let version = container_client.version().version(()).await?;
     println!("Containerd Version: {:?}", version);
 
     client.login(&image_permissions).await?;
