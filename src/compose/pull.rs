@@ -354,47 +354,31 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                         );
 
                         match downloader
-                            .download_layer(
+                            .download_layer_to_containerd(
+                                &container_client,
                                 layer_to_download.full_image.image.clone(),
                                 &layer_to_download.digest,
+                                &layer_to_download.uncompressed_digest,
                             )
                             .await
                         {
-                            Ok(layer_bytes) => {
+                            Ok(()) => {
                                 println!(
                                     "Thread {} downloaded layer: {}",
                                     i, layer_to_download.digest
                                 );
-
-                                upload_content_to_containerd(
-                                    &container_client,
-                                    &layer_to_download.digest,
-                                    layer_bytes.into(),
-                                    {
-                                        let mut labels = HashMap::new();
-                                        labels.insert(
-                                            "containerd.io/distribution.source.docker.io"
-                                                .to_string(),
-                                            layer_to_download.full_image.image.library_name.clone(),
-                                        );
-                                        labels.insert(
-                                            "containerd.io/uncompressed".to_string(),
-                                            layer_to_download.uncompressed_digest.clone(),
-                                        );
-                                        labels
-                                    },
-                                )
-                                .await
-                                .expect("Failed to upload layer to containerd");
                             }
                             Err(e) => {
-                                eprintln!("Thread {} failed to download layer: {}", i, e);
+                                eprintln!(
+                                    "\x1b[31mThread {} failed to download layer: {}\x1b[0m",
+                                    i, e
+                                );
                             }
                         }
                     }
                     _ => {
                         eprintln!(
-                            "Thread {} encountered an unsupported downloadable type: {:?}",
+                            "\x1b[31mThread {} encountered an unsupported downloadable type: {:?}\x1b[0m",
                             i, downloadable
                         );
                     }

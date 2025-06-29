@@ -3,19 +3,27 @@ use tokio::fs;
 
 use crate::{
     client::{ImagePermission, ImagePermissions, OciClient, OciClientError},
+    compose::containerd::client::{
+        self,
+        services::v1::{WriteAction, WriteContentRequest},
+    },
     macros::{impl_error, impl_from_error},
     parser::{FullImage, FullImageWithTag},
     spec::{config::ImageConfig, enums::MediaType, index::ImageIndex, manifest::ImageManifest},
     whiteout::extract_tar,
+    with_namespace,
 };
 use bytes::Bytes;
-use std::{io::Read, path::PathBuf, sync::Arc};
+use futures::StreamExt;
+use std::{collections::HashMap, io::Read, path::PathBuf, sync::Arc};
+use tonic::Request;
 
 impl_error!(OciDownloaderError);
 impl_from_error!(OciClientError, OciDownloaderError);
 impl_from_error!(reqwest::Error, OciDownloaderError);
 impl_from_error!(serde_json::Error, OciDownloaderError);
 impl_from_error!(std::io::Error, OciDownloaderError);
+impl_from_error!(tonic::Status, OciDownloaderError);
 
 pub struct OciDownloader {
     pub client: Arc<OciClient>,
@@ -307,5 +315,145 @@ impl OciDownloader {
         let bytes = response.bytes().await?;
         self.write_blob_cache(digest, &bytes)?;
         Ok(bytes.to_vec())
+    }
+
+    pub async fn download_layer_to_containerd(
+        &self,
+        container_client: &client::Client,
+        image: FullImage,
+        digest: &str,
+        uncompressed_digest: &str,
+    ) -> Result<(), OciDownloaderError> {
+        let url = format!("{}/blobs/{}", image.get_image_url(), digest);
+        println!("Downloading layer {}:{}...", image.image_name, digest);
+
+        let response = self
+            .client
+            .client
+            .get(&url)
+            .headers(
+                self.client
+                    .auth_headers(ImagePermission {
+                        full_image: image.clone(),
+                        permissions: ImagePermissions::Pull,
+                    })
+                    .await?,
+            )
+            .send()
+            .await?;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            return Err(OciDownloaderError(format!(
+                "Failed to download layer: {}",
+                status
+            )));
+        }
+
+        let content_length = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|val| val.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let mut labels = HashMap::new();
+        labels.insert(
+            "containerd.io/distribution.source.docker.io".to_string(),
+            image.library_name.clone(),
+        );
+        labels.insert(
+            "containerd.io/uncompressed".to_string(),
+            uncompressed_digest.to_string(),
+        );
+
+        // Stream the response in 16MB chunks
+        let mut stream = response.bytes_stream();
+        const CHUNK_SIZE: usize = 16 * 1000 * 1000;
+        let mut buffer = Vec::with_capacity(CHUNK_SIZE);
+
+        let mut offset = 0;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            buffer.extend_from_slice(&chunk);
+
+            while buffer.len() >= CHUNK_SIZE {
+                let chunk_to_write = buffer.drain(..CHUNK_SIZE).collect::<Vec<u8>>();
+                let chunk_length = chunk_to_write.len();
+
+                let upload_request = WriteContentRequest {
+                    action: WriteAction::Write as i32,
+                    r#ref: digest.to_string(),
+                    total: content_length as i64,
+                    expected: "".to_string(),
+                    offset,
+                    data: chunk_to_write.into(),
+                    labels: HashMap::new(),
+                };
+
+                let request_stream =
+                    with_namespace!(futures_util::stream::iter(vec![upload_request]), "default");
+
+                let content = container_client.content().write(request_stream).await?;
+                offset += chunk_length as i64;
+
+                let mut stream = content.into_inner();
+                while let Ok(Some(_)) = stream.message().await {
+                    // Wait for the upload to complete
+                }
+            }
+        }
+
+        // Handle any remaining bytes in buffer
+        if !buffer.is_empty() {
+            let length = buffer.len();
+            let upload_request = WriteContentRequest {
+                action: WriteAction::Write as i32,
+                r#ref: digest.to_string(),
+                total: content_length as i64,
+                expected: "".to_string(),
+                offset,
+                data: buffer.into(),
+                labels: HashMap::new(),
+            };
+
+            let request_stream =
+                with_namespace!(futures_util::stream::iter(vec![upload_request]), "default");
+
+            let content = container_client.content().write(request_stream).await?;
+
+            let mut stream = content.into_inner();
+            while let Ok(Some(_)) = stream.message().await {
+                // Wait for the upload to complete
+            }
+
+            // Update the offset after the final write
+            offset += length as i64;
+        }
+
+        // Finalize with a commit
+        let upload_request = WriteContentRequest {
+            action: WriteAction::Commit as i32,
+            r#ref: digest.to_string(),
+            total: content_length as i64,
+            expected: "".to_string(),
+            offset,
+            data: vec![],
+            labels,
+        };
+
+        let request_stream =
+            with_namespace!(futures_util::stream::iter(vec![upload_request]), "default");
+
+        let content = container_client.content().write(request_stream).await?;
+        let mut stream = content.into_inner();
+
+        while let Ok(Some(_)) = stream.message().await {
+            // Wait for the upload to complete
+        }
+
+        Ok(())
     }
 }
