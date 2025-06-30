@@ -30,6 +30,7 @@ mod platform;
 mod runner;
 mod spec;
 mod system_login;
+mod test;
 mod uploader;
 mod walk;
 mod whiteout;

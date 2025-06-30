@@ -165,3 +165,90 @@ pub async fn create_image_in_containerd(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::error::Error;
+
+    use crate::parser::{FullImage, FullImageWithTag};
+    use crate::test::tests::{create_test_client, ContainerdTestEnv};
+
+    #[tokio::test]
+    async fn test_get_existing_digests_from_containerd() -> Result<(), Box<dyn Error>> {
+        let env = ContainerdTestEnv::new().await?;
+        let client = create_test_client(&env.socket_path).await?;
+
+        let digests = get_existing_digests_from_containerd(client.clone()).await?;
+        assert!(digests.is_empty());
+
+        let test_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let test_data = b"".to_vec();
+        upload_content_to_containerd(client.clone(), test_digest, test_data, HashMap::new())
+            .await?;
+
+        let digests = get_existing_digests_from_containerd(client.clone()).await?;
+        assert!(digests.contains(test_digest));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_upload_content_to_containerd() -> Result<(), Box<dyn Error>> {
+        let env = ContainerdTestEnv::new().await?;
+        let client = create_test_client(&env.socket_path).await?;
+
+        let test_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let test_data = b"".to_vec();
+
+        let result =
+            upload_content_to_containerd(client.clone(), test_digest, test_data, HashMap::new())
+                .await;
+        assert!(result.is_ok());
+
+        // Verify that the content is there
+        let digests = get_existing_digests_from_containerd(client.clone()).await?;
+        assert!(digests.contains(test_digest));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_image_in_containerd() -> Result<(), Box<dyn Error>> {
+        let env = ContainerdTestEnv::new().await?;
+        let client = create_test_client(&env.socket_path).await?;
+
+        let full_image = FullImageWithTag {
+            image: FullImage {
+                registry: "registry-1.docker.io".to_string(),
+                image_name: "hello-world".to_string(),
+                library_name: "library/hello-world".to_string(),
+                service: "registry.docker.io".to_string(),
+            },
+            tag: "latest".into(),
+        };
+        let dummy_manifest = r#"{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"mediaType":"application/vnd.docker.container.image.v1+json","size":1,"digest":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"layers":[]}"#;
+        let test_data = dummy_manifest.as_bytes().to_vec();
+        let index_length = test_data.len() as i64;
+        let index_digest = format!("sha256:{}", sha256::digest(test_data.as_slice()));
+        let media_type = "application/vnd.docker.distribution.manifest.v2+json".to_string();
+
+        // We need to upload the content first
+        upload_content_to_containerd(client.clone(), &index_digest, test_data, HashMap::new())
+            .await?;
+
+        let result = create_image_in_containerd(
+            client.clone(),
+            &full_image,
+            index_digest.to_string(),
+            index_length,
+            media_type,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        Ok(())
+    }
+}

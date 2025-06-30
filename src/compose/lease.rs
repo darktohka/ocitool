@@ -16,11 +16,13 @@ pub struct LeasedClient {
 }
 
 impl LeasedClient {
-    pub async fn new(namespace: String) -> Result<Self, Box<dyn std::error::Error>> {
-        const SOCKET_PATH: &str = "/run/containerd/containerd.sock";
-        ensure_socket_access(SOCKET_PATH);
+    pub async fn with_path(
+        namespace: String,
+        path: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        ensure_socket_access(path);
 
-        let client = Client::from_path("/run/containerd/containerd.sock").await?;
+        let client = Client::from_path(path).await?;
         let lease = client
             .leases()
             .create(with_namespace!(
@@ -41,6 +43,11 @@ impl LeasedClient {
                 namespace,
             }),
         }
+    }
+
+    pub async fn new(namespace: String) -> Result<Self, Box<dyn std::error::Error>> {
+        const SOCKET_PATH: &str = "/run/containerd/containerd.sock";
+        Self::with_path(namespace, SOCKET_PATH).await
     }
 
     pub fn lease_id(&self) -> &str {

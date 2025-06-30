@@ -708,3 +708,147 @@ pub fn cleanup_command(cleanup: Cleanup) -> Result<(), Box<dyn std::error::Error
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_strip_sha256_prefix() {
+        assert_eq!(strip_sha256_prefix("sha256:12345"), "12345".to_string());
+        assert_eq!(strip_sha256_prefix("12345"), "12345".to_string());
+    }
+
+    #[test]
+    fn test_is_commit() {
+        assert!(is_commit("da5929574d2d37543b174334c73def59a5aa724b"));
+        assert!(!is_commit("not-a-commit"));
+        assert!(!is_commit("da5929574d2d37543b174334c73def59a5aa724G"));
+    }
+
+    #[test]
+    fn test_find_dir() {
+        let dir = tempdir().unwrap();
+        let path = dir.path();
+
+        fs::create_dir(path.join("a")).unwrap();
+        fs::create_dir_all(path.join("b/c")).unwrap();
+
+        assert_eq!(find_dir(&path.to_path_buf(), "a").unwrap(), path.join("a"));
+        assert_eq!(
+            find_dir(&path.to_path_buf(), "c").unwrap(),
+            path.join("b/c")
+        );
+        assert!(find_dir(&path.to_path_buf(), "d").is_err());
+    }
+
+    #[test]
+    fn test_find_commit_dirs() {
+        let dir = tempdir().unwrap();
+        let path = dir.path();
+
+        let commit_hash = "da5929574d2d37543b174334c73def59a5aa724b";
+        fs::create_dir(path.join(commit_hash)).unwrap();
+        fs::create_dir(path.join("not-a-commit")).unwrap();
+        File::create(path.join("a-file")).unwrap();
+
+        let commit_dirs = find_commit_dirs(&path.to_path_buf()).unwrap();
+        assert_eq!(commit_dirs.len(), 1);
+        assert!(commit_dirs.contains(&path.join(commit_hash)));
+    }
+
+    fn create_test_repo(path: &PathBuf) {
+        fs::create_dir_all(path.join("repositories/test-owner/test-repo/_layers/sha256")).unwrap();
+        fs::create_dir_all(path.join("repositories/test-owner/test-repo/_manifests/tags")).unwrap();
+        fs::create_dir_all(
+            path.join("repositories/test-owner/test-repo/_manifests/revisions/sha256"),
+        )
+        .unwrap();
+        fs::create_dir_all(path.join("docker/registry/v2/blobs/sha256")).unwrap();
+    }
+
+    #[test]
+    fn test_get_repository() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        create_test_repo(&path);
+
+        let docker_repo = get_repository(path.clone()).unwrap();
+
+        assert_eq!(docker_repo.repositories.len(), 1);
+        let repo = &docker_repo.repositories[0];
+        assert_eq!(repo.owner, "test-owner");
+        assert_eq!(repo.name, "test-repo");
+        assert!(repo.dir.ends_with("repositories/test-owner/test-repo"));
+        assert!(repo
+            .layer_dir
+            .ends_with("repositories/test-owner/test-repo/_layers/sha256"));
+        assert!(repo
+            .tag_dir
+            .ends_with("repositories/test-owner/test-repo/_manifests/tags"));
+        assert!(repo
+            .revision_dir
+            .ends_with("repositories/test-owner/test-repo/_manifests/revisions/sha256"));
+        assert!(docker_repo
+            .blobs_dir
+            .ends_with("docker/registry/v2/blobs/sha256"));
+    }
+
+    #[test]
+    fn test_handle_digest() {
+        let mut existing_blobs = HashSet::new();
+        let mut existing_layers = HashSet::new();
+        let digest_value = serde_json::json!({
+            "digest": "sha256:abcdef123456"
+        });
+
+        let digest = handle_digest(&digest_value, &mut existing_blobs, &mut existing_layers);
+
+        assert_eq!(digest, Some("abcdef123456".to_string()));
+        assert!(existing_blobs.contains("abcdef123456"));
+        assert!(existing_layers.contains("abcdef123456"));
+    }
+
+    #[test]
+    fn test_handle_manifest_file_oci() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        create_test_repo(&path);
+        let docker_repo = get_repository(path.clone()).unwrap();
+
+        let manifest_path = path.join("manifest.json");
+        let mut file = File::create(&manifest_path).unwrap();
+        file.write_all(
+            br#"{
+            "config": {
+                "digest": "sha256:abcdef123456"
+            },
+            "layers": [
+                {
+                    "digest": "sha256:fedcba654321"
+                }
+            ]
+        }"#,
+        )
+        .unwrap();
+
+        let mut existing_blobs = HashSet::new();
+        let mut existing_layers = HashSet::new();
+
+        handle_manifest_file(
+            &manifest_path,
+            &docker_repo,
+            &mut existing_blobs,
+            &mut existing_layers,
+        );
+
+        assert!(existing_blobs.contains("abcdef123456"));
+        assert!(existing_blobs.contains("fedcba654321"));
+        assert!(existing_layers.contains("abcdef123456"));
+        assert!(existing_layers.contains("fedcba654321"));
+    }
+}
