@@ -1,6 +1,7 @@
 use crate::cleanup::cleanup_command;
 use crate::client::{ImagePermission, ImagePermissions, OciClient};
 use crate::compose::pull::pull_command;
+use crate::compose::up::up_command;
 use crate::downloader::IndexResponse;
 use crate::parser::FullImageWithTag;
 use crate::spec::manifest::ImageManifest;
@@ -57,6 +58,11 @@ xflags::xflags! {
 
             /// Pulls all images from the respective registries
             cmd pull {
+
+            }
+
+            /// Creates the necessary networks
+            cmd up {
 
             }
         }
@@ -298,6 +304,12 @@ async fn main() {
             ComposeCmd::Pull(ref _pull) => {
                 if let Err(e) = pull_command(&compose).await {
                     eprintln!("Pull error: {}", e);
+                    exit(1);
+                }
+            }
+            ComposeCmd::Up(ref _up) => {
+                if let Err(e) = up_command(&compose).await {
+                    eprintln!("Up error: {}", e);
                     exit(1);
                 }
             }

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use crate::compose::types::compose::Compose;
 
 #[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct DockerCompose {
+    pub name: String,
     pub directory: PathBuf,
     pub compose_path: PathBuf,
     pub compose: Compose,
@@ -62,11 +64,16 @@ pub fn find_and_parse_docker_composes(start_dir: &Path, max_depth: usize) -> Vec
 
         match compose {
             Ok(compose) => {
-                composes.push(DockerCompose {
-                    directory: compose_path.parent().unwrap().to_path_buf(),
-                    compose_path,
-                    compose,
-                });
+                if let Some(parent) = compose_path.parent() {
+                    if let Some(name) = parent.file_name() {
+                        composes.push(DockerCompose {
+                            name: name.to_string_lossy().to_string(),
+                            directory: parent.to_path_buf(),
+                            compose_path,
+                            compose,
+                        });
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("Error parsing {}: {}", compose_path.display(), e);
