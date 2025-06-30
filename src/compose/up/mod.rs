@@ -1,6 +1,7 @@
 mod nerdctl_utils;
 
 use crate::compose::types::compose::{ComposeNetwork, MapOrEmpty, NetworkSettings};
+use crate::compose::up::nerdctl_utils::NetworkName;
 use crate::{compose::docker_compose_finder::find_and_parse_docker_composes, Compose};
 use std::collections::{HashMap, HashSet};
 
@@ -19,7 +20,7 @@ pub async fn up_command(compose_settings: &Compose) -> Result<(), Box<dyn std::e
     }
 
     let existing_networks: HashSet<String> = nerdctl_utils::list_networks()?;
-    let mut networks_to_create = HashMap::<String, NetworkSettings>::new();
+    let mut networks_to_create = HashMap::<NetworkName, NetworkSettings>::new();
 
     for compose in composes {
         for (network_name, network_settings) in compose.compose.networks.0.iter() {
@@ -34,11 +35,11 @@ pub async fn up_command(compose_settings: &Compose) -> Result<(), Box<dyn std::e
                     }
                 }
 
-                let actual_network_name = format!("{}_{}", compose.name, network_name);
+                let nerdctl_network = NetworkName::new(&compose.name, network_name);
 
-                if !existing_networks.contains(&actual_network_name) {
+                if !existing_networks.contains(&nerdctl_network.full_name()) {
                     networks_to_create
-                        .entry(actual_network_name)
+                        .entry(nerdctl_network)
                         .insert_entry(network_settings.clone());
                 }
             }
@@ -50,9 +51,11 @@ pub async fn up_command(compose_settings: &Compose) -> Result<(), Box<dyn std::e
 
     for network_name in network_names {
         if let Some(network_settings) = networks_to_create.get(network_name) {
+            let full_name = network_name.full_name();
+
             match nerdctl_utils::create_network(network_name, network_settings) {
-                Ok(_) => println!("Network '{}' created successfully.", network_name),
-                Err(e) => eprintln!("Failed to create network '{}': {}", network_name, e),
+                Ok(_) => println!("Network '{}' created successfully.", full_name),
+                Err(e) => eprintln!("Failed to create network '{}': {}", full_name, e),
             }
         }
     }

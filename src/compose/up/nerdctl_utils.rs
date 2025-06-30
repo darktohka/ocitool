@@ -1,7 +1,38 @@
 use serde_json::Value;
-use std::{collections::HashSet, process::Command};
+use std::{cmp::Ordering, collections::HashSet, process::Command};
 
 use crate::compose::types::compose::{Labels, NetworkSettings};
+
+#[derive(PartialEq, Eq, Hash)]
+pub struct NetworkName {
+    pub compose_name: String,
+    pub name: String,
+}
+
+impl NetworkName {
+    pub fn new(compose_name: &str, name: &str) -> Self {
+        Self {
+            compose_name: compose_name.to_string(),
+            name: name.to_string(),
+        }
+    }
+
+    pub fn full_name(&self) -> String {
+        format!("{}_{}", self.compose_name, self.name)
+    }
+}
+
+impl PartialOrd for NetworkName {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for NetworkName {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.full_name().cmp(&other.full_name())
+    }
+}
 
 pub fn list_networks() -> Result<HashSet<String>, String> {
     let output = Command::new("nerdctl")
@@ -30,9 +61,11 @@ pub fn list_networks() -> Result<HashSet<String>, String> {
     Ok(existing_networks)
 }
 
-pub fn create_network(name: &str, settings: &NetworkSettings) -> Result<(), String> {
+pub fn create_network(name: &NetworkName, settings: &NetworkSettings) -> Result<(), String> {
+    let full_name = name.full_name();
+
     let mut command = Command::new("nerdctl");
-    command.arg("network").arg("create").arg(name);
+    command.arg("network").arg("create").arg(full_name.clone());
 
     if settings.enable_ipv6 {
         command.arg("--ipv6");
@@ -51,6 +84,12 @@ pub fn create_network(name: &str, settings: &NetworkSettings) -> Result<(), Stri
             }
         }
     }
+
+    command.arg(format!(
+        "--label=com.docker.compose.project={}",
+        name.compose_name
+    ));
+    command.arg(format!("--label=com.docker.compose.network={}", name.name));
 
     // Add driver to the network creation command if specified
     if let Some(driver) = &settings.driver {
@@ -84,7 +123,7 @@ pub fn create_network(name: &str, settings: &NetworkSettings) -> Result<(), Stri
     if !output.status.success() {
         return Err(format!(
             "Failed to create network {}: {}",
-            name,
+            full_name,
             String::from_utf8_lossy(&output.stderr)
         ));
     }
