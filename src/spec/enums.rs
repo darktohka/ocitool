@@ -15,6 +15,45 @@ pub enum MediaType {
     OciImageLayerV1TarGzip,
     #[serde(rename = "application/vnd.oci.image.layer.v1.tar")]
     OciImageLayerV1Tar,
+    #[serde(rename = "application/vnd.docker.distribution.manifest.list.v2+json")]
+    DockerManifestListV2Json,
+    #[serde(rename = "application/vnd.docker.distribution.manifest.v2+json")]
+    DockerManifestV2Json,
+    #[serde(rename = "application/vnd.docker.container.image.v1+json")]
+    DockerConfigV1Json,
+    #[serde(rename = "application/vnd.docker.image.rootfs.diff.tar.gzip")]
+    DockerImageRootfsDiffTarGzip,
+    #[serde(rename = "application/vnd.docker.image.rootfs.diff.tar.zstd")]
+    DockerImageRootfsDiffTarZstd,
+    #[serde(rename = "application/vnd.docker.image.rootfs.diff.tar")]
+    DockerImageRootfsDiffTar,
+}
+
+impl MediaType {
+    pub fn to_string(&self) -> &'static str {
+        match self {
+            MediaType::OciImageIndexV1Json => "application/vnd.oci.image.index.v1+json",
+            MediaType::OciImageManifestV1Json => "application/vnd.oci.image.manifest.v1+json",
+            MediaType::OciImageConfigV1ConfigJson => "application/vnd.oci.image.config.v1+json",
+            MediaType::OciImageLayerV1TarZstd => "application/vnd.oci.image.layer.v1.tar+zstd",
+            MediaType::OciImageLayerV1TarGzip => "application/vnd.oci.image.layer.v1.tar+gzip",
+            MediaType::OciImageLayerV1Tar => "application/vnd.oci.image.layer.v1.tar",
+            MediaType::DockerManifestListV2Json => {
+                "application/vnd.docker.distribution.manifest.list.v2+json"
+            }
+            MediaType::DockerManifestV2Json => {
+                "application/vnd.docker.distribution.manifest.v2+json"
+            }
+            MediaType::DockerConfigV1Json => "application/vnd.docker.container.image.v1+json",
+            MediaType::DockerImageRootfsDiffTarGzip => {
+                "application/vnd.docker.image.rootfs.diff.tar.gzip"
+            }
+            MediaType::DockerImageRootfsDiffTarZstd => {
+                "application/vnd.docker.image.rootfs.diff.tar.zstd"
+            }
+            MediaType::DockerImageRootfsDiffTar => "application/vnd.docker.image.rootfs.diff.tar",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

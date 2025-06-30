@@ -32,6 +32,28 @@ pub struct ImageConfig {
     pub history: Option<Vec<History>>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Healthcheck {
+    #[serde(rename = "Test", skip_serializing_if = "Option::is_none")]
+    pub test: Option<Vec<String>>,
+    #[serde(rename = "Interval", skip_serializing_if = "Option::is_none")]
+    pub interval: Option<i64>,
+    #[serde(rename = "Timeout", skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<i64>,
+    #[serde(rename = "Retries", skip_serializing_if = "Option::is_none")]
+    pub retries: Option<i64>,
+    #[serde(rename = "StartPeriod", skip_serializing_if = "Option::is_none")]
+    pub start_period: Option<i64>,
+    #[serde(rename = "StartInterval", skip_serializing_if = "Option::is_none")]
+    pub start_interval: Option<i64>,
+    #[serde(
+        rename = "Disable",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub disable: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     #[serde(rename = "User", skip_serializing_if = "Option::is_none")]
@@ -61,7 +83,7 @@ pub struct Config {
     #[serde(rename = "CpuShares", skip_serializing_if = "Option::is_none")]
     pub cpu_shares: Option<i64>,
     #[serde(rename = "Healthcheck", skip_serializing_if = "Option::is_none")]
-    pub healthcheck: Option<HashMap<String, String>>,
+    pub healthcheck: Option<Healthcheck>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

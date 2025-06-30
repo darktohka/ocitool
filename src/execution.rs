@@ -1,7 +1,7 @@
 use crate::{
     client::{ImagePermission, ImagePermissions, OciClient},
     digest::sha256_digest,
-    downloader::OciDownloader,
+    downloader::{IndexResponse, OciDownloader},
     parser::{FullImage, FullImageWithTag},
     platform::PlatformMatcher,
     spec::{
@@ -225,23 +225,30 @@ impl PlanExecution {
                             .downloader
                             .download_index(image.clone())
                             .await
-                            .unwrap()
+                            .map_err(|e| OciUploaderError(e.to_string()))?
                             .0;
 
                         let platform_matcher =
                             PlatformMatcher::match_architecture(platform.architecture.clone());
 
-                        let manifest = platform_matcher
-                            .find_manifest(&index.manifests)
-                            .ok_or(OciUploaderError("No matching platform found".to_string()))
-                            .unwrap();
+                        let downloaded_manifest = match index {
+                            IndexResponse::ImageIndex(index) => {
+                                let manifest =
+                                    platform_matcher.find_manifest(&index.manifests).ok_or(
+                                        OciUploaderError("No matching platform found".to_string()),
+                                    )?;
 
-                        let downloaded_manifest: ImageManifest = self
-                            .downloader
-                            .download_manifest(image.image.clone(), &manifest.digest)
-                            .await
-                            .unwrap()
-                            .0;
+                                let downloaded_manifest = self
+                                    .downloader
+                                    .download_manifest(image.image.clone(), &manifest.digest)
+                                    .await
+                                    .map_err(|e| OciUploaderError(e.to_string()))?
+                                    .0;
+
+                                Ok::<ImageManifest, OciUploaderError>(downloaded_manifest)
+                            }
+                            IndexResponse::ImageManifest(index) => Ok(index),
+                        }?;
 
                         let downloaded_config: ImageConfig = self
                             .downloader

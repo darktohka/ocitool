@@ -32,6 +32,11 @@ pub struct OciDownloader {
     no_cache: bool,
 }
 
+pub enum IndexResponse {
+    ImageIndex(ImageIndex),
+    ImageManifest(ImageManifest),
+}
+
 impl OciDownloader {
     pub fn new(client: Arc<OciClient>, no_cache: bool) -> Self {
         let cache_dir = match dirs::cache_dir() {
@@ -50,7 +55,7 @@ impl OciDownloader {
     pub async fn download_index(
         &self,
         image: FullImageWithTag,
-    ) -> Result<(ImageIndex, String), OciDownloaderError> {
+    ) -> Result<(IndexResponse, String), OciDownloaderError> {
         let url = format!("{}/manifests/{}", image.image.get_image_url(), image.tag);
         // println!("Downloading {}:{}...", image.image.image_name, image.tag);
 
@@ -66,7 +71,7 @@ impl OciDownloader {
                     })
                     .await?,
             )
-            .header("Accept", "application/vnd.oci.image.index.v1+json")
+            .header("Accept", "application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json")
             .send()
             .await?;
 
@@ -79,8 +84,19 @@ impl OciDownloader {
             )));
         }
 
+        let headers = response.headers().clone();
+        let content_type = headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|val| val.to_str().ok());
+
         let json = response.text().await?;
-        let image_index: ImageIndex = serde_json::from_str(&json)?;
+
+        let image_index = match content_type {
+            Some("application/vnd.docker.distribution.manifest.v2+json") => {
+                IndexResponse::ImageManifest(serde_json::from_str::<ImageManifest>(&json)?)
+            }
+            _ => IndexResponse::ImageIndex(serde_json::from_str::<ImageIndex>(&json)?),
+        };
         Ok((image_index, json))
     }
 
@@ -134,7 +150,7 @@ impl OciDownloader {
                     })
                     .await?,
             )
-            .header("Accept", "application/vnd.oci.image.manifest.v1+json")
+            .header("Accept", "application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json")
             .send()
             .await?;
 

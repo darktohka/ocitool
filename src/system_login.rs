@@ -11,14 +11,14 @@ pub fn parse_kernel_cmdline(cmdline: &str) -> HashMap<String, LoginCredentials> 
     for part in cmdline.split_whitespace() {
         if let Some(rest) = part.strip_prefix("dockerlogin=") {
             // Split by ';' to get multiple entries
-            for entry in rest.split(';') {
+            for entry in rest.trim_matches('"').split(';') {
                 if entry.trim().is_empty() {
                     continue;
                 }
 
                 let fields: Vec<&str> = entry.split(',').collect();
                 if fields.len() == 3 {
-                    let mut hostname = fields[0].trim().to_string();
+                    let mut hostname = fields[0].trim().trim_matches('"').to_string();
 
                     if !hostname.starts_with("https://") && !hostname.starts_with("http://") {
                         hostname = format!("https://{}", hostname);
@@ -33,8 +33,6 @@ pub fn parse_kernel_cmdline(cmdline: &str) -> HashMap<String, LoginCredentials> 
                     let username = fields[0].trim().to_string();
                     let password = fields[1].trim().to_string();
                     credentials.insert(hostname, LoginCredentials { username, password });
-                } else {
-                    eprintln!("Invalid dockerlogin entry: {}", entry);
                 }
             }
         }

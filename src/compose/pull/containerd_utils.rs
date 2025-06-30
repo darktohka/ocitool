@@ -94,6 +94,7 @@ pub async fn create_image_in_containerd(
     full_image: &FullImageWithTag,
     index_digest: String,
     index_length: i64,
+    media_type: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match container_client
         .client()
@@ -107,7 +108,7 @@ pub async fn create_image_in_containerd(
                     ),
                     labels: HashMap::new(),
                     target: Some(types::Descriptor {
-                        media_type: "application/vnd.oci.image.index.v1+json".to_string(),
+                        media_type: media_type.clone(),
                         digest: index_digest.clone(),
                         size: index_length,
                         annotations: HashMap::new(),
@@ -136,8 +137,7 @@ pub async fn create_image_in_containerd(
                                 ),
                                 labels: HashMap::new(),
                                 target: Some(types::Descriptor {
-                                    media_type: "application/vnd.oci.image.index.v1+json"
-                                        .to_string(),
+                                    media_type,
                                     digest: index_digest.clone(),
                                     size: index_length,
                                     annotations: HashMap::new(),

@@ -52,6 +52,8 @@ impl OciClient {
         default_login: Option<LoginCredentials>,
     ) -> Self {
         let client = Client::builder()
+            .http2_prior_knowledge()
+            .pool_max_idle_per_host(16)
             .build()
             .expect("Failed to build HTTP client");
 
@@ -90,19 +92,27 @@ impl OciClient {
         }
     }
 
-    pub fn login_to_github_registry(
+    pub async fn login_to_github_registry(
         &self,
         reference_image: &FullImage,
+        image_permissions: &[ImagePermission],
     ) -> Result<String, OciClientError> {
         // On GitHub, we do not need to login again
-        let credentials = self.get_credentials(&reference_image.registry)?;
-        Ok(self.get_base64_bearer(&credentials.password))
+        match self.get_credentials(&reference_image.registry) {
+            Ok(credentials) => Ok(self.get_base64_bearer(&credentials.password)),
+            Err(_) => {
+                // No credentials found, we can still try the regular login
+                self.login_to_regular_registry(reference_image, image_permissions, true)
+                    .await
+            }
+        }
     }
 
     pub async fn login_to_regular_registry(
         &self,
         reference_image: &FullImage,
         image_permissions: &[ImagePermission],
+        use_credentials: bool,
     ) -> Result<String, OciClientError> {
         let scopes = image_permissions
             .iter()
@@ -133,17 +143,24 @@ impl OciClient {
 
         let mut request = self.client.get(&url);
 
-        if let Ok(credentials) = self.get_credentials(&reference_image.registry) {
+        if use_credentials {
+            if let Ok(credentials) = self.get_credentials(&reference_image.registry) {
+                println!(
+                    "Logging in as {} for {} to {}...",
+                    credentials.username,
+                    scopes.join("; "),
+                    reference_image.registry,
+                );
+
+                request = request.basic_auth(credentials.username, Some(credentials.password));
+            } else {
+                println!("Logging in anonymously to {}...", reference_image.registry);
+            }
+        } else {
             println!(
-                "Logging in as {} for {} to {}...",
-                credentials.username,
-                scopes.join("; "),
+                "Logging in anonymously to {} (retrying without credentials)",
                 reference_image.registry,
             );
-
-            request = request.basic_auth(credentials.username, Some(credentials.password));
-        } else {
-            println!("Logging in anonymously to {}...", reference_image.registry);
         }
 
         let response = match request.send().await {
@@ -209,10 +226,20 @@ impl OciClient {
         let reference_image = &image_permissions[0].full_image;
 
         let token = if reference_image.is_github_registry() {
-            self.login_to_github_registry(reference_image)
-        } else {
-            self.login_to_regular_registry(reference_image, &image_permissions)
+            self.login_to_github_registry(reference_image, &image_permissions)
                 .await
+        } else {
+            match self
+                .login_to_regular_registry(reference_image, &image_permissions, true)
+                .await
+            {
+                Ok(token) => Ok(token),
+                Err(_) => {
+                    // If we fail to login with credentials, we can try again without them
+                    self.login_to_regular_registry(reference_image, &image_permissions, false)
+                        .await
+                }
+            }
         };
 
         if let Ok(new_bearer) = &token {

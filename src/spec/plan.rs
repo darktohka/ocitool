@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::spec::enums::PlatformArchitecture;
+use crate::spec::{
+    config::{self, Healthcheck},
+    enums::PlatformArchitecture,
+};
 
 use super::config::Config;
 
@@ -45,7 +48,7 @@ pub struct ImagePlanConfig {
     #[serde(rename = "cpu", skip_serializing_if = "Option::is_none")]
     pub cpu_shares: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub healthcheck: Option<HashMap<String, String>>,
+    pub healthcheck: Option<Healthcheck>,
 }
 
 impl ImagePlanConfig {
@@ -161,13 +164,41 @@ pub fn merge_image_plan_configs(
             memory_swap: original.memory_swap.or_else(|| plan.memory_swap),
             cpu_shares: original.cpu_shares.or_else(|| plan.cpu_shares),
             healthcheck: match (&original.healthcheck, &plan.healthcheck) {
-                (Some(original_healthcheck), Some(plan_healthcheck)) => {
-                    let mut merged_healthcheck = original_healthcheck.clone();
-                    merged_healthcheck.extend(plan_healthcheck.clone());
-                    Some(merged_healthcheck)
-                }
-                (None, Some(plan_healthcheck)) => Some(plan_healthcheck.clone()),
-                (Some(original_healthcheck), None) => Some(original_healthcheck.clone()),
+                (Some(original_healthcheck), Some(plan_healthcheck)) => Some(config::Healthcheck {
+                    test: plan_healthcheck
+                        .test
+                        .clone()
+                        .or_else(|| original_healthcheck.test.clone()),
+                    interval: plan_healthcheck.interval.or(original_healthcheck.interval),
+                    timeout: plan_healthcheck.timeout.or(original_healthcheck.timeout),
+                    retries: plan_healthcheck.retries.or(original_healthcheck.retries),
+                    start_period: plan_healthcheck
+                        .start_period
+                        .or(original_healthcheck.start_period),
+                    start_interval: plan_healthcheck
+                        .start_interval
+                        .clone()
+                        .or(original_healthcheck.start_interval.clone()),
+                    disable: plan_healthcheck.disable || original_healthcheck.disable,
+                }),
+                (None, Some(plan_healthcheck)) => Some(config::Healthcheck {
+                    test: plan_healthcheck.test.clone(),
+                    interval: plan_healthcheck.interval,
+                    timeout: plan_healthcheck.timeout,
+                    retries: plan_healthcheck.retries,
+                    start_period: plan_healthcheck.start_period,
+                    start_interval: plan_healthcheck.start_interval.clone(),
+                    disable: plan_healthcheck.disable,
+                }),
+                (Some(original_healthcheck), None) => Some(config::Healthcheck {
+                    test: original_healthcheck.test.clone(),
+                    interval: original_healthcheck.interval,
+                    timeout: original_healthcheck.timeout,
+                    retries: original_healthcheck.retries,
+                    start_period: original_healthcheck.start_period,
+                    start_interval: original_healthcheck.start_interval.clone(),
+                    disable: original_healthcheck.disable,
+                }),
                 (None, None) => None,
             },
         }),

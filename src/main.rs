@@ -1,7 +1,9 @@
 use crate::cleanup::cleanup_command;
 use crate::client::{ImagePermission, ImagePermissions, OciClient};
 use crate::compose::pull::pull_command;
+use crate::downloader::IndexResponse;
 use crate::parser::FullImageWithTag;
+use crate::spec::manifest::ImageManifest;
 use downloader::OciDownloaderError;
 use platform::PlatformMatcher;
 use runner::OciRunner;
@@ -216,16 +218,25 @@ async fn run_command(
     let index = downloader.download_index(image.clone()).await.unwrap().0;
 
     let platform_matcher = PlatformMatcher::new();
-    let manifest = platform_matcher
-        .find_manifest(&index.manifests)
-        .ok_or(OciDownloaderError("No matching platform found".to_string()))
-        .unwrap();
 
-    let downloaded_manifest: spec::manifest::ImageManifest = downloader
-        .download_manifest(image.image.clone(), &manifest.digest)
-        .await
-        .unwrap()
-        .0;
+    let downloaded_manifest = match index {
+        IndexResponse::ImageIndex(index) => {
+            let manifest = platform_matcher
+                .find_manifest(&index.manifests)
+                .ok_or(OciDownloaderError("No matching platform found".to_string()))
+                .unwrap();
+
+            let downloaded_manifest = downloader
+                .download_manifest(image.image.clone(), &manifest.digest)
+                .await
+                .unwrap()
+                .0;
+
+            Ok::<ImageManifest, OciDownloaderError>(downloaded_manifest)
+        }
+        IndexResponse::ImageManifest(index) => Ok(index),
+    }
+    .unwrap();
 
     let downloaded_config = downloader
         .download_config(image.image.clone(), &downloaded_manifest.config.digest)

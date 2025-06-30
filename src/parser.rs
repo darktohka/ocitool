@@ -25,6 +25,8 @@ impl FullImage {
             || self.registry.contains("registry.docker.io")
         {
             "https://auth.docker.io/token".to_string()
+        } else if self.registry.contains("ghcr.io") {
+            "https://ghcr.io/token".to_string()
         } else {
             format!("{}/auth", self.registry)
         }

@@ -65,9 +65,7 @@ impl LeasedClient {
             },
             self.namespace
         );
-        if let Err(e) = self.client.leases().delete(delete_request).await {
-            eprintln!("Failed to delete lease {}: {}", self.lease_id, e);
-        }
+        let _ = self.client.leases().delete(delete_request).await;
     }
 }
 
@@ -91,9 +89,7 @@ impl Drop for LeasedClient {
                 },
                 namespace
             );
-            if let Err(e) = client.leases().delete(delete_request).await {
-                eprintln!("Failed to delete lease {}: {}", lease_id, e);
-            }
+            let _ = client.leases().delete(delete_request).await;
         });
     }
 }

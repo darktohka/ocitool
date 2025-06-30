@@ -1,7 +1,7 @@
 mod containerd_utils;
 
 use crate::compose::lease::LeasedClient;
-use crate::downloader::OciDownloader;
+use crate::downloader::{IndexResponse, OciDownloader};
 use crate::platform::PlatformMatcher;
 use crate::spec::manifest::Descriptor;
 use crate::{
@@ -58,7 +58,6 @@ pub struct PullInstance {
     pub downloaded_bytes: Arc<Mutex<u64>>,
 
     pub digest_to_image: Arc<Mutex<HashMap<String, FullImageWithTag>>>,
-    pub updated_images: Arc<Mutex<HashSet<FullImageWithTag>>>,
 }
 
 pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::error::Error>> {
@@ -84,33 +83,39 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
     client.login(&image_permissions).await?;
 
     let m = MultiProgress::new();
-    let spinners: HashMap<FullImageWithTag, ProgressBar> = {
+    let images = {
         let queue = pull_instance.download_queue.lock().await;
 
-        queue
+        let mut images: Vec<_> = queue
             .iter()
             .filter_map(|downloadable| {
                 if let Downloadable::Index(index) = downloadable {
-                    let full_name = format!(
-                        "{}:{}",
-                        index.full_image.image.library_name, index.full_image.tag
-                    );
-
-                    let progress_bar = m.add(ProgressBar::new(0));
-                    progress_bar.set_style(
-                        ProgressStyle::default_spinner()
-                            .template("{spinner:.green} {msg}")
-                            .expect("Failed to set spinner style")
-                            .progress_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-                    );
-                    progress_bar.set_message(full_name);
-                    Some((index.full_image.clone(), progress_bar))
+                    Some(index.full_image.clone())
                 } else {
                     None
                 }
             })
-            .collect()
+            .collect();
+
+        images.sort_by(|a, b| a.image.library_name.cmp(&b.image.library_name));
+        images
     };
+
+    let spinners: HashMap<FullImageWithTag, ProgressBar> = images
+        .iter()
+        .map(|image| {
+            let full_name = format!("{}:{}", image.image.library_name, image.tag);
+            let progress_bar = m.add(ProgressBar::new(0));
+            progress_bar.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.green} {msg}")
+                    .expect("Failed to set spinner style")
+                    .progress_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+            );
+            progress_bar.set_message(full_name);
+            (image.clone(), progress_bar)
+        })
+        .collect();
     let spinners = Arc::new(spinners);
 
     let progress_bar = m.add(ProgressBar::new(0));
@@ -124,7 +129,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
     let downloaded_bytes = pull_instance.downloaded_bytes.clone();
     let mut tasks = vec![];
 
-    for i in 0..8 {
+    for _ in 0..8 {
         let downloader = downloader.clone();
         let download_queue = pull_instance.download_queue.clone();
         let existing_digests = pull_instance.existing_digests.clone();
@@ -133,11 +138,22 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
         let total_bytes_to_download = total_bytes_to_download.clone();
         let downloaded_bytes = downloaded_bytes.clone();
         let digest_to_image = pull_instance.digest_to_image.clone();
-        let updated_images = pull_instance.updated_images.clone();
         let spinners = spinners.clone();
 
         let task = tokio::spawn(async move {
             let platform_matcher = PlatformMatcher::new();
+
+            let download_failed = async |full_image: FullImageWithTag, error: String| {
+                if let Some(spinner) = spinners.get(&full_image) {
+                    if !spinner.is_finished() {
+                        spinner.finish_with_message(format!(
+                            "{}: \x1b[31mFailed - {}\x1b[0m",
+                            spinner.message(),
+                            error
+                        ));
+                    }
+                }
+            };
 
             let download_complete =
                 async |full_image: FullImageWithTag, digest: String, size: u64| {
@@ -152,16 +168,13 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                     };
 
                     if is_complete {
-                        {
-                            let mut updated_images = updated_images.lock().await;
-                            updated_images.insert(full_image_clone.clone());
-                        }
-
                         if let Some(spinner) = spinners.get(&full_image_clone) {
-                            spinner.finish_with_message(format!(
-                                "{}: \x1b[32mComplete\x1b[0m",
-                                spinner.message()
-                            ));
+                            if !spinner.is_finished() {
+                                spinner.finish_with_message(format!(
+                                    "{}: \x1b[32mComplete\x1b[0m",
+                                    spinner.message()
+                                ));
+                            }
                         }
                     } else {
                         if let Some(spinner) = spinners.get(&full_image) {
@@ -208,7 +221,7 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                             .download_index(index_to_download.full_image.clone())
                             .await
                         {
-                            Ok((image_index, image_json)) => {
+                            Ok((index_response, image_json)) => {
                                 let image_json_len = image_json.len();
                                 let image_digest = format!("sha256:{}", digest(&image_json));
 
@@ -233,16 +246,38 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                                     .library_name
                                                     .clone(),
                                             );
-                                            for (idx, manifest) in
-                                                image_index.manifests.iter().enumerate()
-                                            {
-                                                labels.insert(
-                                                    format!(
-                                                        "containerd.io/gc.ref.content.m.{}",
-                                                        idx
-                                                    ),
-                                                    manifest.digest.clone(),
-                                                );
+                                            match index_response {
+                                                IndexResponse::ImageIndex(ref image_index) => {
+                                                    for (idx, manifest) in
+                                                        image_index.manifests.iter().enumerate()
+                                                    {
+                                                        labels.insert(
+                                                            format!(
+                                                                "containerd.io/gc.ref.content.m.{}",
+                                                                idx
+                                                            ),
+                                                            manifest.digest.clone(),
+                                                        );
+                                                    }
+                                                }
+                                                IndexResponse::ImageManifest(ref manifest) => {
+                                                    labels.insert(
+                                                        "containerd.io/gc.ref.content.config"
+                                                            .to_string(),
+                                                        manifest.config.digest.clone(),
+                                                    );
+                                                    for (idx, layer) in
+                                                        manifest.layers.iter().enumerate()
+                                                    {
+                                                        labels.insert(
+                                                            format!(
+                                                                "containerd.io/gc.ref.content.l.{}",
+                                                                idx
+                                                            ),
+                                                            layer.digest.clone(),
+                                                        );
+                                                    }
+                                                }
                                             }
                                             labels
                                         },
@@ -258,26 +293,56 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                     &index_to_download.full_image,
                                     image_digest.clone(),
                                     image_json_len as i64,
+                                    match index_response {
+                                        IndexResponse::ImageIndex(ref index) => {
+                                            index.media_type.to_string().into()
+                                        }
+                                        IndexResponse::ImageManifest(ref manifest) => {
+                                            manifest.media_type.to_string().into()
+                                        }
+                                    },
                                 )
                                 .await
                                 .expect("Failed to create image in containerd");
 
-                                let manifest =
-                                    platform_matcher.find_manifest(&image_index.manifests);
-                                let mut downloading = false;
-                                if let Some(manifest) = manifest {
-                                    // Check if the manifest digest is already in the download queue
-                                    downloading = queue_if_not_download(
-                                        &manifest.digest,
-                                        Downloadable::Manifest(DownloadableManifest {
-                                            digest: manifest.digest.clone(),
-                                            full_image: index_to_download.full_image.clone(),
-                                        }),
-                                        index_to_download.full_image.clone(),
-                                        manifest.size,
-                                    )
-                                    .await;
-                                }
+                                let downloading = match index_response {
+                                    IndexResponse::ImageIndex(ref image_index) => {
+                                        let manifest =
+                                            platform_matcher.find_manifest(&image_index.manifests);
+                                        if let Some(manifest) = manifest {
+                                            // Check if the manifest digest is already in the download queue
+                                            queue_if_not_download(
+                                                &manifest.digest,
+                                                Downloadable::Manifest(DownloadableManifest {
+                                                    digest: manifest.digest.clone(),
+                                                    full_image: index_to_download
+                                                        .full_image
+                                                        .clone(),
+                                                }),
+                                                index_to_download.full_image.clone(),
+                                                manifest.size,
+                                            )
+                                            .await
+                                        } else {
+                                            println!("\x1b[33mNo matching platform found for image: {}:{}\x1b[0m",
+                                                index_to_download.full_image.image.library_name, index_to_download.full_image.tag);
+                                            false
+                                        }
+                                    }
+                                    IndexResponse::ImageManifest(manifest) => {
+                                        queue_if_not_download(
+                                            &manifest.config.digest,
+                                            Downloadable::Config(DownloadableConfig {
+                                                full_image: index_to_download.full_image.clone(),
+                                                layers: manifest.layers.clone(),
+                                                digest: manifest.config.digest.clone(),
+                                            }),
+                                            index_to_download.full_image.clone(),
+                                            manifest.config.size,
+                                        )
+                                        .await
+                                    }
+                                };
 
                                 if !downloading {
                                     if let Some(spinner) =
@@ -291,7 +356,11 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Thread {} failed to download index: {}", i, e);
+                                download_failed(
+                                    index_to_download.full_image.clone(),
+                                    e.to_string(),
+                                )
+                                .await;
                             }
                         }
                     }
@@ -359,7 +428,11 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 .await;
                             }
                             Err(e) => {
-                                eprintln!("Thread {} failed to download manifest: {}", i, e);
+                                download_failed(
+                                    manifest_to_download.full_image.clone(),
+                                    e.to_string(),
+                                )
+                                .await;
                             }
                         }
                     }
@@ -424,7 +497,11 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 .await;
                             }
                             Err(e) => {
-                                eprintln!("Thread {} failed to download config: {}", i, e);
+                                download_failed(
+                                    config_to_download.full_image.clone(),
+                                    e.to_string(),
+                                )
+                                .await;
                             }
                         }
                     }
@@ -450,10 +527,11 @@ pub async fn run_pull(pull_instance: &PullInstance) -> Result<(), Box<dyn std::e
                                 .await;
                             }
                             Err(e) => {
-                                eprintln!(
-                                    "\x1b[31mThread {} failed to download layer: {}\x1b[0m",
-                                    i, e
-                                );
+                                download_failed(
+                                    layer_to_download.full_image.clone(),
+                                    e.to_string(),
+                                )
+                                .await;
                             }
                         }
                     }
@@ -536,7 +614,6 @@ pub async fn pull_command(compose_settings: &Compose) -> Result<(), Box<dyn std:
         downloaded_bytes: Arc::new(Mutex::new(0)),
 
         digest_to_image: Arc::new(Mutex::new(HashMap::new())),
-        updated_images: Arc::new(Mutex::new(HashSet::new())),
     };
 
     match run_pull(&pull_instance).await {
