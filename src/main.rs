@@ -17,6 +17,7 @@ use std::process::exit;
 use std::sync::Arc;
 use walkdir::WalkDir;
 
+mod access;
 mod cleanup;
 mod client;
 mod compose;

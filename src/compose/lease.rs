@@ -1,4 +1,5 @@
 use crate::{
+    access::ensure_socket_access,
     compose::containerd::client::{
         services::v1::{CreateRequest, DeleteRequest},
         Client,
@@ -15,10 +16,11 @@ pub struct LeasedClient {
 }
 
 impl LeasedClient {
-    pub async fn new(
-        client: Arc<Client>,
-        namespace: String,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(namespace: String) -> Result<Self, Box<dyn std::error::Error>> {
+        const SOCKET_PATH: &str = "/run/containerd/containerd.sock";
+        ensure_socket_access(SOCKET_PATH);
+
+        let client = Client::from_path("/run/containerd/containerd.sock").await?;
         let lease = client
             .leases()
             .create(with_namespace!(
@@ -34,7 +36,7 @@ impl LeasedClient {
         match lease.lease {
             None => Err("Failed to create lease".into()),
             Some(lease) => Ok(Self {
-                client,
+                client: Arc::new(client),
                 lease_id: lease.id,
                 namespace,
             }),

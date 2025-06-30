@@ -6,7 +6,7 @@ use crate::platform::PlatformMatcher;
 use crate::spec::manifest::Descriptor;
 use crate::{
     client::{ImagePermission, ImagePermissions, OciClient},
-    compose::{containerd::client::Client, docker_compose_finder::find_and_parse_docker_composes},
+    compose::docker_compose_finder::find_and_parse_docker_composes,
     parser::FullImageWithTag,
     system_login::get_system_login,
     Compose,
@@ -580,9 +580,7 @@ pub async fn pull_command(compose_settings: &Compose) -> Result<(), Box<dyn std:
         .map(|image| FullImageWithTag::from_image_name(&image))
         .collect();
 
-    let container_client = Client::from_path("/run/containerd/containerd.sock").await?;
-    let leased_client =
-        Arc::new(LeasedClient::new(Arc::new(container_client), "default".to_string()).await?);
+    let leased_client = Arc::new(LeasedClient::new("default".to_string()).await?);
 
     let existing_digests =
         containerd_utils::get_existing_digests_from_containerd(leased_client.clone()).await?;
