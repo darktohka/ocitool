@@ -109,4 +109,34 @@ pub mod tests {
             )),
         }
     }
+
+    #[tokio::test]
+    async fn test_tempdir_file_creation_and_reading() -> Result<(), Box<dyn Error>> {
+        // Create a temporary directory
+        let temp_dir = tempdir()?;
+        let file_path = temp_dir.path().join("test_file.txt");
+
+        // Write some content to a file in the temporary directory
+        let mut file = File::create(&file_path)?;
+        writeln!(file, "Hello, world!")?;
+
+        // Read the content back from the file
+        let content = tokio::fs::read_to_string(&file_path).await?;
+        assert_eq!(content.trim(), "Hello, world!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_containerd_version_fetch() -> Result<(), Box<dyn Error>> {
+        // Initialize the ContainerdTestEnv
+        let env = ContainerdTestEnv::new().await?;
+
+        // Create a test client using the socket path
+        let client = create_test_client(&env.socket_path).await?;
+
+        // Fetch the containerd version using the client
+        client.client().version().version({}).await?;
+        Ok(())
+    }
 }

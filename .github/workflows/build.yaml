@@ -11,12 +11,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Test the binary
-        run: sudo ~/.cargo/bin/cargo test
+      - name: Build the test binary
+        run: docker run --privileged --rm -v $(pwd):/srv -w /srv rust bash -c "cargo build --tests"
+      - name: Run tests
+        run: for test in $(find ./target/debug/deps -type f -name "ocitool-*" -not -name "*.d"); do sudo "$test"; done
 
   build-x86_64:
     runs-on: ubuntu-latest

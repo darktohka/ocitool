@@ -45,11 +45,6 @@ impl LeasedClient {
         }
     }
 
-    pub async fn new(namespace: String) -> Result<Self, Box<dyn std::error::Error>> {
-        const SOCKET_PATH: &str = "/run/containerd/containerd.sock";
-        Self::with_path(namespace, SOCKET_PATH).await
-    }
-
     pub fn lease_id(&self) -> &str {
         &self.lease_id
     }
