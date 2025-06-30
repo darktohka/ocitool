@@ -16,7 +16,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Test the binary
-        run: sudo cargo test
+        run: sudo ~/.cargo/bin/cargo test
 
   build-x86_64:
     runs-on: ubuntu-latest
