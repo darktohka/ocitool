@@ -14,6 +14,7 @@ use crate::{
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use sha256::digest;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -551,6 +552,10 @@ pub async fn pull_command(compose_settings: &Compose) -> Result<(), Box<dyn std:
         .dir
         .clone()
         .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
+    let socket_path: PathBuf = compose_settings
+        .socket
+        .clone()
+        .unwrap_or_else(|| "/run/containerd/containerd.sock".into());
     let max_depth = compose_settings.max_depth.unwrap_or(1);
 
     let composes = find_and_parse_docker_composes(&start_dir, max_depth);
@@ -580,7 +585,9 @@ pub async fn pull_command(compose_settings: &Compose) -> Result<(), Box<dyn std:
         .map(|image| FullImageWithTag::from_image_name(&image))
         .collect();
 
-    let leased_client = Arc::new(LeasedClient::new("default".to_string()).await?);
+    let leased_client = Arc::new(
+        LeasedClient::with_path("default".to_string(), socket_path.to_str().unwrap()).await?,
+    );
 
     let existing_digests =
         containerd_utils::get_existing_digests_from_containerd(leased_client.clone()).await?;
@@ -624,5 +631,41 @@ pub async fn pull_command(compose_settings: &Compose) -> Result<(), Box<dyn std:
             pull_instance.container_client.delete_lease().await;
             Err(e)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::tests::ContainerdTestEnv;
+    use crate::{Compose, ComposeCmd, Pull};
+    use std::fs;
+
+    #[tokio::test]
+    async fn test_pull_command() -> Result<(), Box<dyn std::error::Error>> {
+        let env = ContainerdTestEnv::new().await?;
+        let temp_dir = tempfile::tempdir()?;
+        let compose_path = temp_dir.path().join("docker-compose.yaml");
+        fs::write(
+            &compose_path,
+            r#"
+services:
+  nginx:
+    image: nginx:alpine
+  alpine:
+    image: alpine:edge
+"#,
+        )?;
+
+        let compose_settings = Compose {
+            dir: Some(temp_dir.path().to_path_buf()),
+            socket: Some(env.socket_path.clone()),
+            max_depth: Some(1),
+            subcommand: ComposeCmd::Pull(Pull {}),
+        };
+
+        let result = pull_command(&compose_settings).await;
+        assert!(result.is_ok());
+        Ok(())
     }
 }

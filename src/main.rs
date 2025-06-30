@@ -58,6 +58,10 @@ xflags::xflags! {
             /// If not set, the default is 1
             optional -m,--max-depth max_depth: usize
 
+            /// Sets the containerd socket path to use
+            /// If not set, the default is /run/containerd/containerd.sock
+            optional -s,--socket socket: PathBuf
+
             /// Pulls all images from the respective registries
             cmd pull {
 
