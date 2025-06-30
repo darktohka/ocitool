@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::compose::types::compose::Compose;
 
+#[allow(dead_code)]
 pub struct DockerCompose {
     pub directory: PathBuf,
     pub compose_path: PathBuf,

@@ -1,4 +1,5 @@
 use flate2::read::GzDecoder;
+use indicatif::ProgressBar;
 use tokio::fs;
 
 use crate::{
@@ -323,11 +324,16 @@ impl OciDownloader {
         image: FullImage,
         digest: &str,
         uncompressed_digest: &str,
-        progress_bar: indicatif::ProgressBar,
+        progress_bar: ProgressBar,
+        spinner: Option<&ProgressBar>,
         downloaded_bytes: Arc<tokio::sync::Mutex<u64>>,
     ) -> Result<(), OciDownloaderError> {
+        let tick = || {
+            if let Some(spinner) = spinner {
+                spinner.tick();
+            }
+        };
         let url = format!("{}/blobs/{}", image.get_image_url(), digest);
-        // println!("Downloading layer {}:{}...", image.image_name, digest);
 
         let response = self
             .client
@@ -408,6 +414,7 @@ impl OciDownloader {
                 offset += chunk_length as i64;
                 *downloaded_bytes.lock().await += chunk_length as u64;
                 progress_bar.set_position(*downloaded_bytes.lock().await);
+                tick();
 
                 let mut stream = content.into_inner();
                 loop {
@@ -459,6 +466,7 @@ impl OciDownloader {
             offset += length as i64;
             *downloaded_bytes.lock().await += length as u64;
             progress_bar.set_position(*downloaded_bytes.lock().await);
+            tick();
         }
 
         // Finalize with a commit

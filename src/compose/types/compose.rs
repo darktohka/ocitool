@@ -43,6 +43,7 @@ pub struct Compose {
 }
 
 impl Compose {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Default::default()
     }
@@ -205,10 +206,12 @@ where
 }
 
 impl Service {
+    #[allow(dead_code)]
     pub fn image(&self) -> &str {
         self.image.as_deref().unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub fn network_mode(&self) -> &str {
         self.network_mode.as_deref().unwrap_or_default()
     }
@@ -764,6 +767,7 @@ impl Default for Secrets {
 }
 
 impl Secrets {
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Simple(v) => v.is_empty(),

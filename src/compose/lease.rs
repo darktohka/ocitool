@@ -69,11 +69,6 @@ impl LeasedClient {
             eprintln!("Failed to delete lease {}: {}", self.lease_id, e);
         }
     }
-
-    pub async fn cleanup(&mut self) {
-        self.delete_lease().await;
-        self.lease_id.clear();
-    }
 }
 
 impl Drop for LeasedClient {

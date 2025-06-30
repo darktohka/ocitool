@@ -284,8 +284,8 @@ async fn main() {
             }
         }
         OcitoolCmd::Compose(ref compose) => match compose.subcommand {
-            ComposeCmd::Pull(ref pull) => {
-                if let Err(e) = pull_command(&compose, &pull).await {
+            ComposeCmd::Pull(ref _pull) => {
+                if let Err(e) = pull_command(&compose).await {
                     eprintln!("Pull error: {}", e);
                     exit(1);
                 }
