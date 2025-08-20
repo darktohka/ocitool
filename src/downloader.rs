@@ -3,6 +3,7 @@ use indicatif::ProgressBar;
 use tokio::fs;
 
 use crate::{
+    archive::detect_media_type,
     client::{ImagePermission, ImagePermissions, OciClient, OciClientError},
     compose::{
         containerd::client::services::v1::{WriteAction, WriteContentRequest},
@@ -25,6 +26,7 @@ impl_from_error!(reqwest::Error, OciDownloaderError);
 impl_from_error!(serde_json::Error, OciDownloaderError);
 impl_from_error!(std::io::Error, OciDownloaderError);
 impl_from_error!(tonic::Status, OciDownloaderError);
+impl_from_error!(crate::archive::DetectError, OciDownloaderError);
 
 pub struct OciDownloader {
     pub client: Arc<OciClient>,
@@ -217,7 +219,7 @@ impl OciDownloader {
     pub async fn extract_layer_bytes_to<T: Read>(
         &self,
         bytes: T,
-        media_type: &MediaType,
+        media_type: MediaType,
         dest_dir: &PathBuf,
     ) -> Result<(), OciDownloaderError> {
         match media_type {
@@ -248,11 +250,11 @@ impl OciDownloader {
         &self,
         image: FullImage,
         digest: &str,
-        media_type: &MediaType,
+        _media_type: &MediaType,
         dest_dir: &PathBuf,
     ) -> Result<(), OciDownloaderError> {
         if let Some(blob) = self.load_blob_cache(digest).await {
-            self.extract_layer_bytes_to(&blob[..], media_type, &dest_dir)
+            self.extract_layer_bytes_to(&blob[..], detect_media_type(&blob[..])?, &dest_dir)
                 .await?;
 
             return Ok(());
@@ -287,7 +289,7 @@ impl OciDownloader {
 
         let bytes = response.bytes().await?;
         self.write_blob_cache(digest, &bytes)?;
-        self.extract_layer_bytes_to(bytes.as_ref(), media_type, &dest_dir)
+        self.extract_layer_bytes_to(bytes.as_ref(), detect_media_type(&bytes[..])?, &dest_dir)
             .await?;
 
         Ok(())

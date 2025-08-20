@@ -18,6 +18,7 @@ use std::sync::Arc;
 use walkdir::WalkDir;
 
 mod access;
+mod archive;
 mod cleanup;
 mod client;
 mod compose;
@@ -198,7 +199,7 @@ async fn run_command(
     no_cache: bool,
     username: Option<String>,
     password: Option<String>,
-) {
+) -> Result<(), OciDownloaderError> {
     let image_name = args.image.clone();
     let volumes = args.volume.clone();
     let entrypoint = args.entrypoint.clone();
@@ -221,13 +222,11 @@ async fn run_command(
             full_image: image.image.clone(),
             permissions: ImagePermissions::Pull,
         }])
-        .await
-        .map_err(|e| OciDownloaderError(format!("Failed to login to registry: {}", e)))
-        .unwrap();
+        .await?;
 
     let downloader = downloader::OciDownloader::new(client, no_cache);
 
-    let index = downloader.download_index(image.clone()).await.unwrap().0;
+    let index = downloader.download_index(image.clone()).await?.0;
 
     let platform_matcher = PlatformMatcher::new();
 
@@ -235,28 +234,24 @@ async fn run_command(
         IndexResponse::ImageIndex(index) => {
             let manifest = platform_matcher
                 .find_manifest(&index.manifests)
-                .ok_or(OciDownloaderError("No matching platform found".to_string()))
-                .unwrap();
+                .ok_or(OciDownloaderError("No matching platform found".to_string()))?;
 
             let downloaded_manifest = downloader
                 .download_manifest(image.image.clone(), &manifest.digest)
-                .await
-                .unwrap()
+                .await?
                 .0;
 
             Ok::<ImageManifest, OciDownloaderError>(downloaded_manifest)
         }
         IndexResponse::ImageManifest(index) => Ok(index),
-    }
-    .unwrap();
+    }?;
 
     let downloaded_config = downloader
         .download_config(image.image.clone(), &downloaded_manifest.config.digest)
-        .await
-        .unwrap()
+        .await?
         .0;
 
-    let tmpdir = tempfile::tempdir().unwrap();
+    let tmpdir = tempfile::tempdir()?;
     let tmpdir_path = tmpdir.path();
 
     for layer in downloaded_manifest.layers {
@@ -267,8 +262,7 @@ async fn run_command(
                 &layer.media_type,
                 &tmpdir_path.to_path_buf(),
             )
-            .await
-            .expect("Failed to extract layer");
+            .await?;
     }
 
     let runner = OciRunner::new(
@@ -282,7 +276,11 @@ async fn run_command(
         !args.no_ensure_dns,
     );
 
-    runner.run().await.expect("Failed to run command");
+    runner
+        .run()
+        .await
+        .map_err(|e| OciDownloaderError(format!("{:?}", e)))?;
+    Ok(())
 }
 
 #[tokio::main]
@@ -299,7 +297,12 @@ async fn main() {
         OcitoolCmd::Upload(upload) => {
             upload_command(&upload, args.no_cache, username, password).await
         }
-        OcitoolCmd::Run(run) => run_command(&run, args.no_cache, username, password).await,
+        OcitoolCmd::Run(run) => {
+            if let Err(e) = run_command(&run, args.no_cache, username, password).await {
+                eprintln!("Run error: {}", e);
+                exit(1);
+            }
+        }
         OcitoolCmd::Cleanup(cleanup) => {
             if let Err(e) = cleanup_command(cleanup) {
                 eprintln!("Cleanup error: {}", e);
