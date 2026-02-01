@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Build the test binary
         run: docker run --privileged --rm -v $(pwd):/srv -w /srv rust bash -c "cargo build --tests"
       - name: Run tests
@@ -26,11 +26,11 @@ jobs:
           curl -SsL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           cargo binstall cross
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Build the binary for x86_64
         run: RUSTFLAGS="-C target-feature=+crt-static" ~/.cargo/bin/cross build --profile release-lto --target x86_64-unknown-linux-gnu
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binary-x86_64
           path: target/x86_64-unknown-linux-gnu/release-lto/ocitool
@@ -47,11 +47,11 @@ jobs:
           curl -SsL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           cargo binstall cross
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Build the binary for arm64
         run: RUSTFLAGS="-C target-feature=+crt-static" ~/.cargo/bin/cross build --profile release-lto --target aarch64-unknown-linux-gnu
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binary-aarch64
           path: target/aarch64-unknown-linux-gnu/release-lto/ocitool
@@ -68,11 +68,11 @@ jobs:
           curl -SsL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           cargo binstall cross
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Build the binary for armv7
         run: RUSTFLAGS="-C target-feature=+crt-static" ~/.cargo/bin/cross build --profile release-lto --target armv7-unknown-linux-gnueabihf
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binary-armv7
           path: target/armv7-unknown-linux-gnueabihf/release-lto/ocitool
@@ -86,12 +86,21 @@ jobs:
     needs: [build-x86_64, build-arm64, build-armv7, test]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
       - name: Set executable permissions
         run: |
           chmod +x */ocitool
       - name: Push the image
         run: |
           ./binary-x86_64/ocitool upload --username ${{ secrets.DOCKER_USERNAME }} --password ${{ secrets.DOCKER_PASSWORD }}
+
+  keepalive:
+    name: Keep workflow alive
+    runs-on: ubuntu-slim
+    permissions:
+      actions: write
+    steps:
+      - name: Keep workflow alive
+        uses: darktohka/keepalive-workflow@v1
