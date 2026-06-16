@@ -325,7 +325,7 @@ pub mod images_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.images.v1.Images/Get",
             );
@@ -350,7 +350,7 @@ pub mod images_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.images.v1.Images/List",
             );
@@ -377,7 +377,7 @@ pub mod images_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.images.v1.Images/Create",
             );
@@ -405,7 +405,7 @@ pub mod images_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.images.v1.Images/Update",
             );
@@ -429,7 +429,7 @@ pub mod images_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.images.v1.Images/Delete",
             );

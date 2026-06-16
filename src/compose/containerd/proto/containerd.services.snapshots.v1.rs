@@ -497,7 +497,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/Prepare",
             );
@@ -526,7 +526,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/View",
             );
@@ -549,7 +549,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/Mounts",
             );
@@ -575,7 +575,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/Commit",
             );
@@ -601,7 +601,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/Remove",
             );
@@ -630,7 +630,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/Stat",
             );
@@ -656,7 +656,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/Update",
             );
@@ -685,7 +685,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/List",
             );
@@ -708,7 +708,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/Usage",
             );
@@ -734,7 +734,7 @@ pub mod snapshots_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.snapshots.v1.Snapshots/Cleanup",
             );

@@ -397,7 +397,7 @@ pub mod containers_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.containers.v1.Containers/Get",
             );
@@ -426,7 +426,7 @@ pub mod containers_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.containers.v1.Containers/List",
             );
@@ -455,7 +455,7 @@ pub mod containers_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.containers.v1.Containers/ListStream",
             );
@@ -484,7 +484,7 @@ pub mod containers_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.containers.v1.Containers/Create",
             );
@@ -513,7 +513,7 @@ pub mod containers_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.containers.v1.Containers/Update",
             );
@@ -539,7 +539,7 @@ pub mod containers_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.containers.v1.Containers/Delete",
             );

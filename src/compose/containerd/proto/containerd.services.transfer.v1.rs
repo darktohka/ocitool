@@ -137,7 +137,7 @@ pub mod transfer_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.transfer.v1.Transfer/Transfer",
             );

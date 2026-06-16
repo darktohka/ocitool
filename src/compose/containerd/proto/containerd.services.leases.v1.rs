@@ -300,7 +300,7 @@ pub mod leases_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.leases.v1.Leases/Create",
             );
@@ -326,7 +326,7 @@ pub mod leases_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.leases.v1.Leases/Delete",
             );
@@ -351,7 +351,7 @@ pub mod leases_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.leases.v1.Leases/List",
             );
@@ -373,7 +373,7 @@ pub mod leases_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.leases.v1.Leases/AddResource",
             );
@@ -400,7 +400,7 @@ pub mod leases_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.leases.v1.Leases/DeleteResource",
             );
@@ -430,7 +430,7 @@ pub mod leases_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = crate::compose::containerd::client::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/containerd.services.leases.v1.Leases/ListResources",
             );

@@ -1,5 +1,9 @@
 pub use tonic;
 
+pub mod codec {
+    include!("proto/codec.rs");
+}
+
 /// Generated `containerd.types` types.
 pub mod types {
     include!("proto/containerd.types.rs");
