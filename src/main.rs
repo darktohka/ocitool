@@ -1,5 +1,5 @@
 use crate::cleanup::cleanup_command;
-use crate::client::{ImagePermission, ImagePermissions, OciClient};
+use crate::client::{ImagePermission, ImagePermissions, LoginCredentials, OciClient};
 use crate::compose::pull::pull_command;
 use crate::compose::up::up_command;
 use crate::downloader::IndexResponse;
@@ -39,13 +39,14 @@ mod whiteout;
 xflags::xflags! {
     /// Uploads an OCI image to a registry
     cmd ocitool {
-        /// Sets the username to authenticate to the registry with
-        /// If not set, the DOCKER_USERNAME environment variable will be used
-        optional -u, --username username: String
+        /// Sets the registry host to authenticate to
+        repeated --host host: String
 
-        /// Sets the password to authenticate to the registry with
-        /// If not set, the DOCKER_PASSWORD environment variable will be used
-        optional -p, --password password: String
+        /// Sets the username to authenticate to the registry with (requires --host)
+        repeated -u, --username username: String
+
+        /// Sets the password to authenticate to the registry with (requires --host)
+        repeated -p, --password password: String
 
         /// Disables the on-disk cache
         optional --no-cache
@@ -139,8 +140,8 @@ xflags::xflags! {
 async fn upload_command(
     args: &Upload,
     no_cache: bool,
-    username: Option<String>,
-    password: Option<String>,
+    hostname_to_login: HashMap<String, LoginCredentials>,
+    default_login: Option<LoginCredentials>,
 ) {
     let compression_level = args.compression_level.unwrap_or_else(|| {
         env::var("COMPRESSION_LEVEL")
@@ -177,15 +178,7 @@ async fn upload_command(
 
     let file = File::open(plan).expect("Failed to open plan file");
     let plan: ImagePlan = serde_json::from_reader(file).unwrap();
-    let default_credentials = match (username, password) {
-        (Some(user), Some(pass)) => Some(client::LoginCredentials {
-            username: user,
-            password: pass,
-        }),
-        _ => None,
-    };
-
-    let client = Arc::new(OciClient::new(HashMap::new(), default_credentials));
+    let client = Arc::new(OciClient::new(hostname_to_login, default_login));
     let mut execution = execution::PlanExecution::new(plan, client, no_cache, compression_level);
 
     if let Err(e) = execution.execute().await {
@@ -197,8 +190,8 @@ async fn upload_command(
 async fn run_command(
     args: &Run,
     no_cache: bool,
-    username: Option<String>,
-    password: Option<String>,
+    hostname_to_login: HashMap<String, LoginCredentials>,
+    default_login: Option<LoginCredentials>,
 ) -> Result<(), OciDownloaderError> {
     let image_name = args.image.clone();
     let volumes = args.volume.clone();
@@ -208,14 +201,7 @@ async fn run_command(
 
     let image = FullImageWithTag::from_image_name(&image_name);
 
-    let default_credentials = match (username, password) {
-        (Some(user), Some(pass)) => Some(client::LoginCredentials {
-            username: user,
-            password: pass,
-        }),
-        _ => None,
-    };
-    let client = Arc::new(OciClient::new(HashMap::new(), default_credentials));
+    let client = Arc::new(OciClient::new(hostname_to_login, default_login));
 
     client
         .login(&[ImagePermission {
@@ -287,18 +273,48 @@ async fn run_command(
 async fn main() {
     let args = Ocitool::from_env_or_exit();
 
-    let username = args
-        .username
-        .map(|s| s.to_string())
-        .or_else(|| env::var("DOCKER_USERNAME").ok());
-    let password = args.password.map(|s| s.to_string());
+    let hosts = args.host;
+    let usernames = args.username;
+    let passwords = args.password;
+
+    if !hosts.is_empty() || !usernames.is_empty() || !passwords.is_empty() {
+        if hosts.len() != usernames.len() || hosts.len() != passwords.len() {
+            eprintln!(
+                "Error: --host, --username, and --password must be specified together with the same count"
+            );
+            exit(1);
+        }
+    }
+
+    let hostname_to_login: HashMap<String, LoginCredentials> = hosts
+        .into_iter()
+        .zip(usernames.into_iter())
+        .zip(passwords.into_iter())
+        .map(|((host, username), password)| {
+            let hostname = if host.starts_with("http://") || host.starts_with("https://") {
+                host
+            } else {
+                format!("https://{}", host)
+            };
+            (hostname, LoginCredentials { username, password })
+        })
+        .collect();
+
+    let default_login = match (
+        env::var("DOCKER_USERNAME").ok(),
+        env::var("DOCKER_PASSWORD").ok(),
+    ) {
+        (Some(username), Some(password)) => Some(LoginCredentials { username, password }),
+        _ => None,
+    };
 
     match args.subcommand {
         OcitoolCmd::Upload(upload) => {
-            upload_command(&upload, args.no_cache, username, password).await
+            upload_command(&upload, args.no_cache, hostname_to_login, default_login).await
         }
         OcitoolCmd::Run(run) => {
-            if let Err(e) = run_command(&run, args.no_cache, username, password).await {
+            if let Err(e) = run_command(&run, args.no_cache, hostname_to_login, default_login).await
+            {
                 eprintln!("Run error: {}", e);
                 exit(1);
             }

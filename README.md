@@ -70,7 +70,30 @@ To run tests for `ocitool`, ensure you have the Rust toolchain installed and nav
 
 `ocitool` provides several subcommands to interact with containers and images.
 
-- **Pull all images from a multi-compose ppoject:**
+### Authentication
+
+Credentials can be scoped to specific registries using `--host`, `--username`, and `--password` flags:
+
+```bash
+ocitool --host registry.example.com --username user --password pass upload
+```
+
+Multiple registry credentials can be specified:
+
+```bash
+ocitool \
+  --host registry.example.com --username user1 --password pass1 \
+  --host ghcr.io --username user2 --password pass2 \
+  upload
+```
+
+If `--host`, `--username`, and `--password` are not provided, the `DOCKER_USERNAME` and `DOCKER_PASSWORD` environment variables are used as a fallback for all registries.
+
+System-level authentication from the kernel command line (`dockerlogin=hostname,username,password;...`) is also supported for compose workflows.
+
+### Subcommands
+
+- **Pull all images from a multi-compose project:**
 
   ```bash
   ocitool compose --dir /compose pull
@@ -80,6 +103,18 @@ To run tests for `ocitool`, ensure you have the Rust toolchain installed and nav
 
   ```bash
   ocitool compose --dir /compose up
+  ```
+
+- **Run a container image:**
+
+  ```bash
+  ocitool run --image ubuntu:latest -- /bin/bash
+  ```
+
+- **Upload an OCI image plan:**
+
+  ```bash
+  ocitool upload
   ```
 
   For more details on specific commands, you can use the `--help` flag:
