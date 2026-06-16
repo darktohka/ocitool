@@ -277,19 +277,28 @@ async fn main() {
     let usernames = args.username;
     let passwords = args.password;
 
-    if !hosts.is_empty() || !usernames.is_empty() || !passwords.is_empty() {
+    if !hosts.is_empty() {
         if hosts.len() != usernames.len() || hosts.len() != passwords.len() {
             eprintln!(
                 "Error: --host, --username, and --password must be specified together with the same count"
             );
             exit(1);
         }
+    } else if !usernames.is_empty() || !passwords.is_empty() {
+        if usernames.len() != 1 || passwords.len() != 1 {
+            eprintln!(
+                "Error: without --host, a single --username and --password pair is expected"
+            );
+            exit(1);
+        }
     }
+
+    let has_hosts = !hosts.is_empty();
 
     let hostname_to_login: HashMap<String, LoginCredentials> = hosts
         .into_iter()
-        .zip(usernames.into_iter())
-        .zip(passwords.into_iter())
+        .zip(usernames.clone().into_iter())
+        .zip(passwords.clone().into_iter())
         .map(|((host, username), password)| {
             let hostname = if host.starts_with("http://") || host.starts_with("https://") {
                 host
@@ -300,12 +309,19 @@ async fn main() {
         })
         .collect();
 
-    let default_login = match (
-        env::var("DOCKER_USERNAME").ok(),
-        env::var("DOCKER_PASSWORD").ok(),
-    ) {
-        (Some(username), Some(password)) => Some(LoginCredentials { username, password }),
-        _ => None,
+    let default_login = if !has_hosts && !usernames.is_empty() {
+        Some(LoginCredentials {
+            username: usernames.into_iter().next().unwrap(),
+            password: passwords.into_iter().next().unwrap(),
+        })
+    } else {
+        match (
+            env::var("DOCKER_USERNAME").ok(),
+            env::var("DOCKER_PASSWORD").ok(),
+        ) {
+            (Some(username), Some(password)) => Some(LoginCredentials { username, password }),
+            _ => None,
+        }
     };
 
     match args.subcommand {
