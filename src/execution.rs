@@ -1,4 +1,5 @@
 use crate::{
+    archive::detect_media_type,
     client::{ImagePermission, ImagePermissions, OciClient},
     digest::sha256_digest,
     downloader::{IndexResponse, OciDownloader},
@@ -42,6 +43,7 @@ pub struct Layer {
     pub digest: String,
     pub size: u64,
     pub comment: String,
+    pub media_type: MediaType,
 }
 
 pub struct Digest {
@@ -52,7 +54,7 @@ pub struct Digest {
 impl Layer {
     pub fn to_descriptor(&self) -> Descriptor {
         Descriptor {
-            media_type: MediaType::OciImageLayerV1TarZstd,
+            media_type: self.media_type.clone(),
             digest: self.digest.clone(),
             size: self.size,
             data: None,
@@ -113,7 +115,13 @@ impl PlanExecution {
         );
     }
 
-    fn build_layer(&self, data: Vec<u8>, digest: Digest, comment: &str) -> (Blob, Layer) {
+    fn build_layer(
+        &self,
+        data: Vec<u8>,
+        digest: Digest,
+        comment: &str,
+        media_type: MediaType,
+    ) -> (Blob, Layer) {
         let blob = Blob {
             digest: digest.compressed_digest.clone(),
             data,
@@ -124,6 +132,7 @@ impl PlanExecution {
             digest: digest.compressed_digest,
             size: blob.data.len() as u64,
             comment: comment.to_string(),
+            media_type,
         };
 
         (blob, layer)
@@ -204,18 +213,13 @@ impl PlanExecution {
 
                         let (compressed_tar_buffer, digest) = self.compress_tar(&tar_buffer).await;
 
-                        vec![(compressed_tar_buffer, digest)]
+                        vec![(compressed_tar_buffer, digest, MediaType::OciImageLayerV1TarZstd)]
                     }
                     ImagePlanLayerType::Layer => {
-                        let layer_data = fs::read(&layer.source).unwrap();
-                        let digest = sha256_digest(&layer_data);
-                        vec![(
-                            layer_data,
-                            Digest {
-                                compressed_digest: digest.clone(),
-                                uncompressed_digest: digest,
-                            },
-                        )]
+                        let tar_buffer = fs::read(&layer.source).unwrap();
+                        let (compressed_tar_buffer, digest) = self.compress_tar(&tar_buffer).await;
+
+                        vec![(compressed_tar_buffer, digest, MediaType::OciImageLayerV1TarZstd)]
                     }
                     ImagePlanLayerType::Image => {
                         let image_name = layer.source.clone();
@@ -260,7 +264,7 @@ impl PlanExecution {
                             .unwrap()
                             .0;
 
-                        let mut tar_layers: Vec<(Vec<u8>, Digest)> = vec![];
+                        let mut tar_layers: Vec<(Vec<u8>, Digest, MediaType)> = vec![];
 
                         for (index, layer) in downloaded_manifest.layers.iter().enumerate() {
                             let layer_data = self
@@ -269,6 +273,10 @@ impl PlanExecution {
                                 .await
                                 .unwrap();
 
+                            let media_type = detect_media_type(&layer_data)
+                                .unwrap_or_else(|_| layer.media_type.clone())
+                                .to_oci_layer_media_type();
+
                             tar_layers.push((
                                 layer_data,
                                 Digest {
@@ -276,6 +284,7 @@ impl PlanExecution {
                                     uncompressed_digest: downloaded_config.rootfs.diff_ids[index]
                                         .clone(),
                                 },
+                                media_type,
                             ));
                         }
 
@@ -283,9 +292,10 @@ impl PlanExecution {
                     }
                 };
 
-                for (tar_buffer, digest) in tar_buffers {
+                for (tar_buffer, digest, media_type) in tar_buffers {
                     let layer_comment = layer.comment.clone();
-                    let (blob, new_layer) = self.build_layer(tar_buffer, digest, &layer_comment);
+                    let (blob, new_layer) =
+                        self.build_layer(tar_buffer, digest, &layer_comment, media_type);
                     self.uploader.upload_blob(full_image.clone(), &blob).await?;
                     layers.push(new_layer);
                 }
@@ -394,5 +404,132 @@ impl PlanExecution {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn test_execution() -> PlanExecution {
+        let plan = ImagePlan {
+            name: "registry.example.com/test".to_string(),
+            tags: vec!["latest".to_string()],
+            platforms: vec![],
+            config: None,
+        };
+
+        PlanExecution::new(plan, Arc::new(OciClient::new(HashMap::new(), None)), true, 3)
+    }
+
+    fn sample_tar() -> Vec<u8> {
+        let mut tar_buffer = Vec::new();
+        {
+            let mut builder = Builder::new(&mut tar_buffer);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(4);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "file.txt", &b"test"[..])
+                .unwrap();
+            builder.finish().unwrap();
+        }
+
+        tar_buffer
+    }
+
+    #[tokio::test]
+    async fn compress_tar_produces_zstd_blob_with_correct_digests() {
+        let execution = test_execution();
+        let tar_buffer = sample_tar();
+
+        let (compressed, digest) = execution.compress_tar(&tar_buffer).await;
+
+        assert_eq!(&compressed[0..4], &[0x28, 0xB5, 0x2F, 0xFD]);
+        assert_eq!(digest.uncompressed_digest, sha256_digest(&tar_buffer));
+        assert_eq!(digest.compressed_digest, sha256_digest(&compressed));
+        assert_ne!(digest.compressed_digest, digest.uncompressed_digest);
+    }
+
+    #[tokio::test]
+    async fn tar_layer_blob_is_zstd_and_descriptor_matches() {
+        let execution = test_execution();
+        let tar_buffer = sample_tar();
+
+        let (compressed, digest) = execution.compress_tar(&tar_buffer).await;
+        let (blob, layer) =
+            execution.build_layer(compressed, digest, "test", MediaType::OciImageLayerV1TarZstd);
+        let descriptor = layer.to_descriptor();
+
+        assert_eq!(
+            descriptor.media_type.to_string(),
+            "application/vnd.oci.image.layer.v1.tar+zstd"
+        );
+        assert_eq!(descriptor.digest, blob.digest);
+        assert_eq!(descriptor.size, blob.data.len() as u64);
+        assert_eq!(
+            detect_media_type(&blob.data).unwrap().to_string(),
+            "application/vnd.oci.image.layer.v1.tar+zstd"
+        );
+    }
+
+    #[test]
+    fn detects_uncompressed_tar_as_tar_media_type() {
+        let tar_buffer = sample_tar();
+
+        assert_eq!(
+            detect_media_type(&tar_buffer).unwrap().to_string(),
+            "application/vnd.oci.image.layer.v1.tar"
+        );
+    }
+
+    #[test]
+    fn descriptor_uses_layer_media_type() {
+        let layer = Layer {
+            uncompressed_digest: "sha256:uncompressed".to_string(),
+            digest: "sha256:compressed".to_string(),
+            size: 42,
+            comment: "test".to_string(),
+            media_type: MediaType::OciImageLayerV1TarGzip,
+        };
+
+        let descriptor = layer.to_descriptor();
+
+        assert_eq!(
+            descriptor.media_type.to_string(),
+            "application/vnd.oci.image.layer.v1.tar+gzip"
+        );
+        assert_eq!(descriptor.digest, "sha256:compressed");
+        assert_eq!(descriptor.size, 42);
+    }
+
+    #[test]
+    fn maps_docker_layer_media_types_to_oci() {
+        assert_eq!(
+            MediaType::DockerImageRootfsDiffTarGzip
+                .to_oci_layer_media_type()
+                .to_string(),
+            "application/vnd.oci.image.layer.v1.tar+gzip"
+        );
+        assert_eq!(
+            MediaType::DockerImageRootfsDiffTarZstd
+                .to_oci_layer_media_type()
+                .to_string(),
+            "application/vnd.oci.image.layer.v1.tar+zstd"
+        );
+        assert_eq!(
+            MediaType::DockerImageRootfsDiffTar
+                .to_oci_layer_media_type()
+                .to_string(),
+            "application/vnd.oci.image.layer.v1.tar"
+        );
+        assert_eq!(
+            MediaType::OciImageLayerV1TarGzip
+                .to_oci_layer_media_type()
+                .to_string(),
+            "application/vnd.oci.image.layer.v1.tar+gzip"
+        );
     }
 }

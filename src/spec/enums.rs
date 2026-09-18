@@ -30,6 +30,15 @@ pub enum MediaType {
 }
 
 impl MediaType {
+    pub fn to_oci_layer_media_type(&self) -> MediaType {
+        match self {
+            MediaType::DockerImageRootfsDiffTarGzip => MediaType::OciImageLayerV1TarGzip,
+            MediaType::DockerImageRootfsDiffTarZstd => MediaType::OciImageLayerV1TarZstd,
+            MediaType::DockerImageRootfsDiffTar => MediaType::OciImageLayerV1Tar,
+            other => other.clone(),
+        }
+    }
+
     pub fn to_string(&self) -> &'static str {
         match self {
             MediaType::OciImageIndexV1Json => "application/vnd.oci.image.index.v1+json",
