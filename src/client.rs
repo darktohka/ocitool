@@ -2,7 +2,7 @@ use std::{collections::HashMap, error::Error, sync::Arc};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use reqwest::{
-    header::{HeaderMap, HeaderValue, AUTHORIZATION},
+    header::{HeaderMap, HeaderValue, AUTHORIZATION, WWW_AUTHENTICATE},
     Client, StatusCode,
 };
 use tokio::sync::Mutex;
@@ -46,6 +46,106 @@ impl<'a> std::fmt::Display for OciClientError {
     }
 }
 
+/// The token endpoint advertised by a registry through the
+/// `WWW-Authenticate: Bearer ...` challenge returned by its `/v2/` endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthChallenge {
+    /// The absolute URL of the token endpoint, e.g.
+    /// `https://registry.tohka.us/api/auth/token`.
+    pub realm: String,
+
+    /// The service name the token should be scoped to, e.g. `registry.tohka.us`.
+    pub service: Option<String>,
+}
+
+impl AuthChallenge {
+    /// Parses a `WWW-Authenticate` header value, returning the challenge when it
+    /// is a `Bearer` challenge that advertises a `realm`.
+    pub fn parse(header_value: &str) -> Option<Self> {
+        let (scheme, params) = header_value.split_once(' ')?;
+
+        if !scheme.eq_ignore_ascii_case("bearer") {
+            return None;
+        }
+
+        let mut realm = None;
+        let mut service = None;
+
+        for (key, value) in parse_auth_params(params) {
+            match key.as_str() {
+                "realm" => realm = Some(value),
+                "service" => service = Some(value),
+                _ => {}
+            }
+        }
+
+        Some(AuthChallenge {
+            realm: realm?,
+            service,
+        })
+    }
+}
+
+/// Splits an authentication parameter list (e.g. `realm="...",service="..."`)
+/// into individual key/value pairs. Values may be quoted or bare.
+fn parse_auth_params(input: &str) -> Vec<(String, String)> {
+    let bytes = input.as_bytes();
+    let mut params = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b',') {
+            i += 1;
+        }
+
+        if i >= bytes.len() {
+            break;
+        }
+
+        let key_start = i;
+        while i < bytes.len() && !matches!(bytes[i], b'=' | b',') {
+            i += 1;
+        }
+
+        let key = input[key_start..i].trim().to_ascii_lowercase();
+
+        if i >= bytes.len() || bytes[i] != b'=' {
+            continue;
+        }
+        i += 1;
+
+        let value = if i < bytes.len() && bytes[i] == b'"' {
+            i += 1;
+
+            let value_start = i;
+            while i < bytes.len() && bytes[i] != b'"' {
+                i += 1;
+            }
+
+            let value = input[value_start..i].to_string();
+
+            if i < bytes.len() {
+                i += 1;
+            }
+
+            value
+        } else {
+            let value_start = i;
+            while i < bytes.len() && bytes[i] != b',' {
+                i += 1;
+            }
+
+            input[value_start..i].trim().to_string()
+        };
+
+        if !key.is_empty() {
+            params.push((key, value));
+        }
+    }
+
+    params
+}
+
 impl OciClient {
     pub fn new(
         hostname_to_login: HashMap<String, LoginCredentials>,
@@ -65,11 +165,17 @@ impl OciClient {
         }
     }
 
-    pub fn get_bearer(&self, token: &str) -> String {
-        format!("Bearer {}", token)
+    pub fn get_bearer(&self, token: &str) -> Result<String, OciClientError> {
+        let bearer = format!("Bearer {}", token);
+
+        HeaderValue::from_str(&bearer).map_err(|_| {
+            OciClientError("Registry returned an invalid authentication token".to_string())
+        })?;
+
+        Ok(bearer)
     }
 
-    pub fn get_base64_bearer(&self, token: &str) -> String {
+    pub fn get_base64_bearer(&self, token: &str) -> Result<String, OciClientError> {
         self.get_bearer(&BASE64_STANDARD.encode(token.as_bytes()))
     }
 
@@ -92,6 +198,24 @@ impl OciClient {
         }
     }
 
+    /// Discovers the registry's token endpoint from the `WWW-Authenticate`
+    /// challenge returned by `/v2/`, returning `None` when unavailable.
+    pub async fn discover_auth_challenge(&self, registry_url: &str) -> Option<AuthChallenge> {
+        let url = format!("{}/v2/", registry_url.trim_end_matches('/'));
+
+        let response = self.client.get(&url).send().await.ok()?;
+
+        for value in response.headers().get_all(WWW_AUTHENTICATE) {
+            if let Ok(value) = value.to_str() {
+                if let Some(challenge) = AuthChallenge::parse(value) {
+                    return Some(challenge);
+                }
+            }
+        }
+
+        None
+    }
+
     pub async fn login_to_github_registry(
         &self,
         reference_image: &FullImage,
@@ -99,7 +223,7 @@ impl OciClient {
     ) -> Result<String, OciClientError> {
         // On GitHub, we do not need to login again
         match self.get_credentials(&reference_image.registry) {
-            Ok(credentials) => Ok(self.get_base64_bearer(&credentials.password)),
+            Ok(credentials) => self.get_base64_bearer(&credentials.password),
             Err(_) => {
                 // No credentials found, we can still try the regular login
                 self.login_to_regular_registry(reference_image, image_permissions, true)
@@ -134,11 +258,26 @@ impl OciClient {
             .collect::<Vec<_>>()
             .join("&");
 
+        let (realm, service) = match self
+            .discover_auth_challenge(&reference_image.registry)
+            .await
+        {
+            Some(challenge) => (
+                challenge.realm,
+                challenge
+                    .service
+                    .unwrap_or_else(|| reference_image.service.clone()),
+            ),
+            None => (
+                reference_image.get_auth_url(),
+                reference_image.service.clone(),
+            ),
+        };
+
+        let separator = if realm.contains('?') { '&' } else { '?' };
         let url = format!(
-            "{}?service={}&{}",
-            reference_image.get_auth_url(),
-            reference_image.service,
-            all_scopes
+            "{}{}service={}&{}",
+            realm, separator, service, all_scopes
         );
 
         let mut request = self.client.get(&url);
@@ -199,19 +338,17 @@ impl OciClient {
             Ok(json) => ["access_token", "token"]
                 .iter()
                 .find_map(|key| json.get(key).and_then(|v| v.as_str()))
-                .map_or_else(
-                    || {
-                        Err(OciClientError(format!(
-                            "Could not get token from JSON response: {}",
-                            response_text
-                        )))
-                    },
-                    |token| Ok(self.get_bearer(token)),
-                ),
-            _ => Ok(self.get_bearer(&response_text)),
-        }?;
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    OciClientError(format!(
+                        "Could not get token from JSON response: {}",
+                        response_text
+                    ))
+                })?,
+            _ => response_text.trim().to_string(),
+        };
 
-        Ok(token)
+        self.get_bearer(&token)
     }
 
     pub async fn login_to_container_registry(
@@ -329,9 +466,116 @@ impl OciClient {
             }
         };
 
+        let value = HeaderValue::from_str(&bearer).map_err(|_| {
+            OciClientError("Stored bearer token is not a valid header value".to_string())
+        })?;
+
         let mut headers = HeaderMap::with_capacity(1);
-        headers.insert(AUTHORIZATION, HeaderValue::from_str(&bearer).unwrap());
+        headers.insert(AUTHORIZATION, value);
 
         Ok(headers)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_image(registry: &str) -> FullImage {
+        FullImage {
+            registry: registry.to_string(),
+            image_name: "nirai-panda3d".to_string(),
+            library_name: "base/nirai-panda3d".to_string(),
+            service: "registry.tohka.us".to_string(),
+        }
+    }
+
+    #[test]
+    fn parses_docker_hub_challenge() {
+        let challenge = AuthChallenge::parse(
+            r#"Bearer realm="https://auth.docker.io/token",service="registry.docker.io""#,
+        )
+        .expect("Docker Hub challenge should parse");
+
+        assert_eq!(challenge.realm, "https://auth.docker.io/token");
+        assert_eq!(challenge.service.as_deref(), Some("registry.docker.io"));
+    }
+
+    #[test]
+    fn parses_custom_realm_challenge() {
+        let challenge = AuthChallenge::parse(
+            r#"Bearer realm="https://registry.tohka.us/api/auth/token",service="registry.tohka.us""#,
+        )
+        .expect("custom realm challenge should parse");
+
+        assert_eq!(
+            challenge.realm,
+            "https://registry.tohka.us/api/auth/token"
+        );
+        assert_eq!(challenge.service.as_deref(), Some("registry.tohka.us"));
+    }
+
+    #[test]
+    fn parses_challenge_without_service() {
+        let challenge = AuthChallenge::parse(r#"Bearer realm="https://example.com/token""#)
+            .expect("challenge without service should parse");
+
+        assert_eq!(challenge.realm, "https://example.com/token");
+        assert_eq!(challenge.service, None);
+    }
+
+    #[test]
+    fn parses_challenge_with_extra_parameters() {
+        let challenge = AuthChallenge::parse(
+            r#"Bearer realm="https://example.com/token",service="example.com",scope="repository:foo/bar:pull""#,
+        )
+        .expect("challenge with extra parameters should parse");
+
+        assert_eq!(challenge.realm, "https://example.com/token");
+        assert_eq!(challenge.service.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn parses_bearer_scheme_case_insensitively() {
+        let challenge =
+            AuthChallenge::parse(r#"bearer realm="https://example.com/token""#).expect("lowercase");
+
+        assert_eq!(challenge.realm, "https://example.com/token");
+    }
+
+    #[test]
+    fn ignores_non_bearer_challenges() {
+        assert!(AuthChallenge::parse(r#"Basic realm="example.com""#).is_none());
+    }
+
+    #[test]
+    fn ignores_bearer_challenge_without_realm() {
+        assert!(AuthChallenge::parse(r#"Bearer service="example.com""#).is_none());
+    }
+
+    #[test]
+    fn rejects_invalid_bearer_token() {
+        let client = OciClient::new(HashMap::new(), None);
+
+        assert!(client.get_bearer("line1\nline2").is_err());
+        assert!(client.get_bearer("line1\r\nline2").is_err());
+        assert!(client.get_bearer("valid-token").is_ok());
+    }
+
+    #[tokio::test]
+    async fn auth_headers_errors_on_invalid_bearer() {
+        let client = OciClient::new(HashMap::new(), None);
+        let permission = ImagePermission {
+            full_image: test_image("https://registry.tohka.us"),
+            permissions: ImagePermissions::Pull,
+        };
+
+        client
+            .image_bearer_map
+            .lock()
+            .await
+            .insert(permission.clone(), "Bearer line1\nline2".to_string());
+
+        assert!(client.auth_headers(permission).await.is_err());
     }
 }
